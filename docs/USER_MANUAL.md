@@ -22,12 +22,22 @@ on-screen labels, prize names and key bindings so you can find them in the app.
 
 The menu appears when the simulator starts. Click an option or press **1–4**:
 
-| Key | Mode | Time | Behavior |
-| --- | --- | --- | --- |
-| `1` | Sandbox | Unlimited | Small position variation and gentle bounces |
-| `2` | Easy (Facil) | 4 minutes | Small position variation and light bounces |
-| `3` | Medium (Medio) | 3 minutes | More varied angles and distances; moderate bounces |
-| `4` | Hard (Dificil) | 2 minutes | Widest position variation; strong, lasting bounces |
+| Key | Mode | Time | Tray (width × depth) | Behavior |
+| --- | --- | --- | --- | --- |
+| `1` | Sandbox | Unlimited | 2.50 × 1.60 | Small position variation and gentle bounces |
+| `2` | Easy (Facil) | 4 minutes | 2.35 × 1.40 | Small position variation and light bounces |
+| `3` | Medium (Medio) | 3 minutes | 2.20 × 1.20 | More varied angles and distances; moderate bounces |
+| `4` | Hard (Dificil) | 2 minutes | 2.05 × 1.00 | Widest position variation; strong, lasting bounces |
+
+The green delivery platform shrinks with each difficulty, requiring more precise
+releases. The table uses world units; the tray's center and height stay the same.
+On Hard, its area is about 49% smaller than in Sandbox, but it still fits three
+separate deliveries without stacking. The dividers resize with the tray. Align
+each alien with a free space, wait for the arm to stop, then open the claw:
+releasing while moving transfers velocity and may send it past the edge.
+The validated route for each spawn leaves at least 0.05 world units between the
+alien's box and the tray edges. Reset keeps the chosen mode's tray size;
+pausing and continuing preserves the tray and current deliveries.
 
 Alien positions are randomized for every new game and reset. Colors also swap
 places: the blue alien, for example, is no longer always in the center. Sandbox
@@ -262,7 +272,9 @@ Collisions use conservative boxes and do not rotate aliens.
 Tests cover delivery of all three aliens in every mode, bounces, collisions
 between prizes, timeout, reset and allocation failures. They also check 24 seeds
 per mode, covering all six collection orders, floor support, absence of overlaps
-and increased variation with difficulty. The generator uses forward kinematics
+and increased variation with difficulty. Tests also verify progressive tray
+shrinkage, size preservation after reset, clearance for all three deliveries
+and rejection of points for an alien partly over the edge. The generator uses forward kinematics
 poses, bounded retries and a safe fallback layout that is also validated.
 `machine_create_seeded(mode, seed)` reproduces a layout in tests; normal gameplay
 chooses a new seed automatically. The graphical test

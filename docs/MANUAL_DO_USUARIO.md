@@ -18,12 +18,23 @@ o braço não se move automaticamente até ele.
 
 O menu aparece ao abrir o simulador. Clique numa opção ou pressione **1–4**:
 
-| Tecla | Modo | Tempo | Comportamento |
-| --- | --- | --- | --- |
-| `1` | Sandbox | Sem limite | Pequena variação de posição e quiques suaves |
-| `2` | Fácil | 4 minutos | Pequena variação de posição e quiques leves |
-| `3` | Médio | 3 minutos | Ângulos e distâncias mais variados; quiques moderados |
-| `4` | Difícil | 2 minutos | Maior variação de posição; quiques fortes e demorados |
+| Tecla | Modo | Tempo | Bandeja (largura × profundidade) | Comportamento |
+| --- | --- | --- | --- | --- |
+| `1` | Sandbox | Sem limite | 2,50 × 1,60 | Pequena variação de posição e quiques suaves |
+| `2` | Fácil | 4 minutos | 2,35 × 1,40 | Pequena variação de posição e quiques leves |
+| `3` | Médio | 3 minutos | 2,20 × 1,20 | Ângulos e distâncias mais variados; quiques moderados |
+| `4` | Difícil | 2 minutos | 2,05 × 1,00 | Maior variação de posição; quiques fortes e demorados |
+
+A plataforma verde de entrega diminui a cada dificuldade, exigindo mais precisão
+ao soltar os aliens. As medidas da tabela estão em unidades do cenário; o centro
+e a altura da bandeja permanecem iguais. No difícil, a área é cerca de 49% menor
+que no sandbox, mas ainda há espaço para três entregas separadas, sem empilhar.
+As divisórias acompanham a redução. Alinhe cada alien em um espaço livre,
+espere o braço parar e só então abra a garra: soltá-lo em movimento transmite
+velocidade e pode fazê-lo passar da borda. A rota validada para cada spawn
+reserva pelo menos 0,05 unidade entre a caixa do alien e as bordas da bandeja.
+Resetar mantém o tamanho do modo escolhido; pausar e continuar preserva a bandeja
+e as entregas atuais.
 
 As posições dos aliens são sorteadas a cada nova partida e reset. As cores também
 trocam de lugar: o alien azul, por exemplo, não fica sempre no centro. No sandbox
@@ -252,6 +263,8 @@ Os testes verificam a entrega dos três aliens em todos os modos, quiques,
 colisões entre prêmios, tempo esgotado, reinício e falhas de alocação.
 Também verificam 24 sementes por modo, cobrindo as seis ordens de coleta,
 o apoio no piso, a ausência de sobreposição e o aumento da variação por dificuldade.
+Verificam ainda a redução progressiva da bandeja, sua preservação após reset,
+a margem das três entregas e a rejeição de pontos para um alien parcialmente na borda.
 O gerador usa poses de cinemática direta, tentativas limitadas e um layout seguro
 de reserva, também validado. `machine_create_seeded(mode, seed)` permite reproduzir
 um layout nos testes; a partida normal escolhe uma nova semente automaticamente.

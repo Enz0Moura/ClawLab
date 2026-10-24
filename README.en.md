@@ -6,7 +6,7 @@ A graphics library using OOP in **C11** and a 3D claw machine simulator built
 with **OpenGL and freeglut**. The arm has a base, shoulder, elbow, wrist and
 two articulated fingers. Control the joints, capture three aliens and release
 them into the delivery tray. Capture is deterministic; the selected mode sets the
-time limit, bounce strength and variation in the aliens' starting positions.
+time limit, bounce strength, variation in the aliens' starting positions and tray size.
 
 The visuals are inspired by the **Pizza Planet claw machine from Toy Story**.
 
@@ -47,12 +47,17 @@ right-drag looks around and scrolling moves forward or backward. **Home** resets
 
 ## Game modes
 
-| Mode | Time | Starting positions | Collisions |
-| --- | --- | --- | --- |
-| Sandbox | Unlimited | Small angular variation, constant distance | Gentle bounces for practice |
-| Easy (Fácil) | 4 minutes | Small angular variation, constant distance | Light bounces and stronger damping |
-| Medium (Médio) | 3 minutes | Wider angular variation and three possible distances | Moderate bounces |
-| Hard (Difícil) | 2 minutes | Widest angular variation and seven possible distances | Strong bounces and weaker damping |
+| Mode | Time | Tray (width × depth) | Starting positions | Collisions |
+| --- | --- | --- | --- | --- |
+| Sandbox | Unlimited | 2.50 × 1.60 | Small angular variation, constant distance | Gentle bounces for practice |
+| Easy (Fácil) | 4 minutes | 2.35 × 1.40 | Small angular variation, constant distance | Light bounces and stronger damping |
+| Medium (Médio) | 3 minutes | 2.20 × 1.20 | Wider angular variation and three possible distances | Moderate bounces |
+| Hard (Difícil) | 2 minutes | 2.05 × 1.00 | Widest angular variation and seven possible distances | Strong bounces and weaker damping |
+
+Dimensions use world units. The tray shrinks in width and depth while keeping its
+center and height. Even on Hard, it fits three separate aliens; spawn validation
+requires a delivery route with clearance from the edges. Reset keeps the current
+mode's tray size, and pausing preserves the game.
 
 Every new game or reset randomizes positions and shuffles colors among them.
 Aliens start supported by the floor, separated from each other and clear of the
