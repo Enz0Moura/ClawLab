@@ -20,8 +20,14 @@ typedef struct {
     AABB workspace; /* Interior safety envelope, including the open sides. */
 } MachineConfig;
 extern const MachineConfig MACHINE_CONFIG;
-/* Known FK pose used to place the prizes and verify the documented tutorial.
- * No inverse kinematics is used at runtime. */
+typedef enum { MODE_SANDBOX, MODE_EASY, MODE_MEDIUM, MODE_HARD, MODE_COUNT } GameMode;
+typedef struct {
+    const char *name;
+    float time_limit, restitution, friction;
+    int spawn_yaw_jitter, spawn_pose_first, spawn_pose_count;
+} ModeConfig;
+extern const ModeConfig GAME_MODES[MODE_COUNT];
+/* Known FK pose used by the safe fallback layout. No runtime IK. */
 extern const float PICKUP_POSE[JOINT_COUNT];
 
 #endif

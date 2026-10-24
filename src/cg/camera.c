@@ -23,6 +23,28 @@ void camera_orbit(Camera *c, float yaw, float pitch) {
 void camera_zoom(Camera *c, float delta) {
     c->distance = cg_clamp(c->distance + delta, 6, 22);
 }
+void camera_pan(Camera *c, float dx, float dy, int height) {
+    if (height <= 0 || !isfinite(dx) || !isfinite(dy))
+        return;
+    Vec3 forward = v3_normalize(v3_sub(c->target, camera_eye(c)));
+    Vec3 right = v3_normalize(v3_cross(forward, vec3(0, 1, 0)));
+    Vec3 up = v3_cross(right, forward);
+    float scale = 2 * c->distance * tanf(cg_radians(c->fov) * .5f) / (float)height;
+    c->target = v3_add(c->target, v3_add(v3_scale(right, -dx * scale), v3_scale(up, dy * scale)));
+}
+void camera_look(Camera *c, float yaw, float pitch) {
+    if (!isfinite(yaw) || !isfinite(pitch))
+        return;
+    Vec3 eye = camera_eye(c);
+    c->yaw = fmodf(c->yaw + yaw, 360);
+    c->pitch = cg_clamp(c->pitch + pitch, -89, 89);
+    c->target = v3_add(c->target, v3_sub(eye, camera_eye(c)));
+}
+void camera_dolly(Camera *c, float distance) {
+    if (isfinite(distance))
+        c->target =
+            v3_add(c->target, v3_scale(v3_normalize(v3_sub(c->target, camera_eye(c))), distance));
+}
 bool camera_ray(const Camera *c, float x, float y, int width, int height, Ray *out) {
     Mat4 inverse;
     if (!out || width <= 0 || height <= 0 ||

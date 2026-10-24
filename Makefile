@@ -8,11 +8,11 @@ LDLIBS += -lglut -lGL -lm
 
 CG_SOURCES := $(wildcard src/cg/*.c)
 CG_OBJECTS := $(patsubst %.c,$(BUILD)/%.o,$(CG_SOURCES))
-APP_SOURCES := src/app/config.c src/app/machine.c src/app/theme.c src/app/ui.c src/app/main.c
+APP_SOURCES := src/app/config.c src/app/machine.c src/app/physics.c src/app/theme.c src/app/ui.c src/app/main.c
 APP_OBJECTS := $(patsubst %.c,$(BUILD)/%.o,$(APP_SOURCES))
 DEMO_OBJECT := $(BUILD)/examples/library_demo.o
 TEST_OBJECT := $(BUILD)/tests/test_all.o
-MACHINE_OBJECTS := $(BUILD)/src/app/config.o $(BUILD)/src/app/machine.o $(BUILD)/src/app/theme.o
+MACHINE_OBJECTS := $(BUILD)/src/app/config.o $(BUILD)/src/app/machine.o $(BUILD)/src/app/physics.o $(BUILD)/src/app/theme.o
 
 .PHONY: all lib demo run example test sanitize smoke clean
 all: $(BUILD)/prize_machine $(BUILD)/library_demo

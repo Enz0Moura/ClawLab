@@ -1,13 +1,27 @@
 #include "app/machine.h"
+#include "app/physics.h"
 #include "app/theme.h"
 
 #include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
 static const Color WHITE = {.78f, .84f, .91f}, DARK = {.10f, .13f, .24f};
 static const Color RED = {.87f, .055f, .085f}, METAL = {.64f, .72f, .84f};
+static bool initialize_spawns(PrizeMachine *m);
+
+static uint32_t next_spawn_seed(void) {
+    static uint32_t sequence;
+    if (!sequence) {
+        struct timespec now = {0};
+        timespec_get(&now, TIME_UTC);
+        sequence = (uint32_t)now.tv_sec ^ (uint32_t)now.tv_nsec;
+    }
+    return sequence += UINT32_C(0x9e3779b9);
+}
 
 static Mat4 shape(Vec3 position, Vec3 size) {
     return mat4_mul(mat4_translate(position), mat4_scale(size));
@@ -165,25 +179,26 @@ static bool build_arm(PrizeMachine *m) {
     return true;
 }
 PrizeMachine *machine_create(void) {
+    return machine_create_seeded(MODE_SANDBOX, next_spawn_seed());
+}
+PrizeMachine *machine_create_seeded(GameMode mode, uint32_t seed) {
+    if (mode < MODE_SANDBOX || mode >= MODE_COUNT)
+        return NULL;
     PrizeMachine *m = calloc(1, sizeof(*m));
     if (!m)
         return NULL;
     m->selected = m->held = m->release_contact = -1;
+    m->mode = mode;
+    m->time_remaining = GAME_MODES[mode].time_limit;
+    m->spawn_seed = seed;
     m->root = scene_node_create("maquina", NULL);
     if (!m->root || !build_cabinet(m) || !build_arm(m)) {
         machine_destroy(m);
         return NULL;
     }
     const MachineConfig *c = &MACHINE_CONFIG;
-    /* These fixed polar positions come from the documented pickup FK pose. */
-    float radius = -c->upper_length * sinf(cg_radians(PICKUP_POSE[1])) -
-                   c->fore_length * sinf(cg_radians(PICKUP_POSE[1] + PICKUP_POSE[2]));
     static const char *names[PRIZE_COUNT] = {"Coral", "Azul", "Amarelo"};
     for (int i = 0; i < PRIZE_COUNT; ++i) {
-        float yaw = cg_radians(c->prize_yaw[i]);
-        Mat4 pose = mat4_mul(
-            mat4_translate(vec3(radius * cosf(yaw), c->prize_size * .5f, -radius * sinf(yaw))),
-            mat4_rotate_y(c->prize_yaw[i]));
         Geometry *alien = theme_alien_create(c->prize_colors[i]);
         if (!alien) {
             machine_destroy(m);
@@ -196,8 +211,10 @@ PrizeMachine *machine_create(void) {
             machine_destroy(m);
             return NULL;
         }
-        m->prizes[i].node->local =
-            mat4_mul(pose, mat4_scale(vec3(c->prize_size, c->prize_size, c->prize_size)));
+    }
+    if (!initialize_spawns(m)) {
+        machine_destroy(m);
+        return NULL;
     }
     update_world(m);
     message(m, "Escolha um premio e aproxime a garra.");
@@ -210,7 +227,12 @@ void machine_destroy(PrizeMachine *m) {
     }
 }
 bool machine_reset(PrizeMachine *m) {
-    PrizeMachine *fresh = machine_create();
+    return machine_start(m, m->mode);
+}
+bool machine_start(PrizeMachine *m, GameMode mode) {
+    if (mode < MODE_SANDBOX || mode >= MODE_COUNT)
+        return false;
+    PrizeMachine *fresh = machine_create_seeded(mode, next_spawn_seed());
     if (!fresh)
         return false;
     SceneNode *old = m->root;
@@ -246,7 +268,7 @@ static bool unobstructed(const PrizeMachine *m, Vec3 a, Vec3 b) {
     return true;
 }
 int machine_capture_candidate(const PrizeMachine *m, float *required_gap) {
-    if (m->held >= 0)
+    if (m->held >= 0 || m->round != ROUND_PLAYING)
         return -1;
     Mat4 inverse;
     if (!mat4_inverse(m->arm.grip->world, &inverse))
@@ -329,7 +351,7 @@ bool machine_pose_valid(const PrizeMachine *m) {
     return true;
 }
 void machine_target_joint(PrizeMachine *m, int joint, float degrees) {
-    if (joint < 0 || joint >= JOINT_COUNT || !isfinite(degrees))
+    if (m->round != ROUND_PLAYING || joint < 0 || joint >= JOINT_COUNT || !isfinite(degrees))
         return;
     const JointConfig *c = &MACHINE_CONFIG.joints[joint];
     m->arm.target[joint] = cg_clamp(degrees, c->min, c->max);
@@ -341,13 +363,16 @@ void machine_nudge_joint(PrizeMachine *m, int joint, float degrees) {
         machine_target_joint(m, joint, m->arm.target[joint] + degrees);
 }
 void machine_open(PrizeMachine *m) {
+    if (m->round != ROUND_PLAYING)
+        return;
+    Vec3 release_velocity = machine_at_target(m) ? vec3(0, 0, 0) : m->held_velocity;
     m->arm.opening_target = MACHINE_CONFIG.finger_max;
     if (m->held >= 0) {
         Prize *p = &m->prizes[m->held];
         /* Prize always belongs to root: attachment changes transforms, not owners. */
         p->node->local = p->node->world;
         p->state = PRIZE_FALLING;
-        p->fall_speed = 0;
+        p->velocity = release_velocity;
         m->release_contact = m->held;
         m->held = -1;
         message(m, "Premio solto.");
@@ -355,6 +380,8 @@ void machine_open(PrizeMachine *m) {
         message(m, "Abrindo a garra.");
 }
 void machine_close(PrizeMachine *m) {
+    if (m->round != ROUND_PLAYING)
+        return;
     if (m->held >= 0) {
         message(m, "Garra ocupada.");
         return;
@@ -405,82 +432,203 @@ static void move_fingers(PrizeMachine *m, float dt) {
         Prize *p = &m->prizes[candidate];
         p->relative_to_grip = mat4_mul(inverse, p->node->world);
         p->state = PRIZE_HELD;
+        p->velocity = vec3(0, 0, 0);
+        m->held_velocity = vec3(0, 0, 0);
         m->held = candidate;
         m->arm.opening_target = new_angle;
         message(m, "Premio capturado!");
     }
 }
-static bool horizontal_overlap(AABB a, AABB b) {
-    return a.max.x > b.min.x && a.min.x < b.max.x && a.max.z > b.min.z && a.min.z < b.max.z;
+/* Integer FK poses keep the palm upright and the grip within capture tolerance
+ * of a floor-supported alien. Wider mode ranges require more elbow adjustment.
+ * Candidates still have to pass the actual collision and capture rules below. */
+static const float SPAWN_POSES[][JOINT_COUNT] = {
+    {0, -53, -70, -57}, {0, -50, -75, -55}, {0, -48, -80, -52},  {0, -45, -85, -50},
+    {0, -43, -90, -47}, {0, -40, -95, -45}, {0, -38, -100, -42},
+};
+static uint32_t spawn_random(uint32_t *state) {
+    /* Local SplitMix32 stream: no dependency on libc rand or gameplay updates. */
+    uint32_t z = (*state += UINT32_C(0x9e3779b9));
+    z = (z ^ (z >> 16)) * UINT32_C(0x21f0aaad);
+    z = (z ^ (z >> 15)) * UINT32_C(0x735a2d97);
+    return z ^ (z >> 15);
 }
-static void fall(PrizeMachine *m, float dt) {
-    for (int p = 0; p < PRIZE_COUNT; ++p)
-        if (m->prizes[p].state == PRIZE_FALLING) {
-            Prize *prize = &m->prizes[p];
-            AABB bounds = scene_bounds(prize->node);
-            prize->fall_speed += MACHINE_CONFIG.gravity * dt;
-            float new_bottom = bounds.min.y - prize->fall_speed * dt, top = -FLT_MAX;
-            int support = -1;
-            /* Sweep the bottom through all support planes: a fall cannot tunnel. */
-            for (int s = 0; s < m->solid_count + PRIZE_COUNT; ++s) {
-                if (s == m->solid_count + p)
-                    continue;
-                if (s >= m->solid_count && m->prizes[s - m->solid_count].state != PRIZE_AVAILABLE &&
-                    m->prizes[s - m->solid_count].state != PRIZE_DELIVERED)
-                    continue;
-                AABB obstacle = s < m->solid_count
-                                    ? scene_bounds(m->solids[s].node)
-                                    : scene_bounds(m->prizes[s - m->solid_count].node);
-                if (horizontal_overlap(bounds, obstacle) &&
-                    obstacle.max.y <= bounds.min.y + .003f && obstacle.max.y >= new_bottom &&
-                    obstacle.max.y > top) {
-                    top = obstacle.max.y;
-                    support = s;
-                }
-            }
-            float displacement = support >= 0 ? top - bounds.min.y : -prize->fall_speed * dt;
-            prize->node->local.m[13] += displacement;
-            scene_update(prize->node, mat4_identity());
-            if (support >= 0) {
-                prize->fall_speed = 0;
-                prize->state = PRIZE_AVAILABLE;
-                AABB area = machine_delivery_region(m);
-                if (support == m->tray_solid && bounds.min.x >= area.min.x &&
-                    bounds.max.x <= area.max.x && bounds.min.z >= area.min.z &&
-                    bounds.max.z <= area.max.z) {
-                    prize->state = PRIZE_DELIVERED;
-                    ++m->delivered;
-                    if (m->selected == p)
-                        m->selected = -1;
-                    message(m, m->delivered == PRIZE_COUNT
-                                   ? "Todos os premios entregues! R: reiniciar."
-                                   : "Entrega concluida!");
-                } else
-                    message(m, "Premio apoiado. Tente novamente.");
-            }
+static void place_spawn(Prize *p, const float pose[JOINT_COUNT], float yaw) {
+    const MachineConfig *c = &MACHINE_CONFIG;
+    memcpy(p->pickup_pose, pose, sizeof(p->pickup_pose));
+    p->pickup_pose[0] = yaw;
+    float radius = -c->upper_length * sinf(cg_radians(pose[1])) -
+                   c->fore_length * sinf(cg_radians(pose[1] + pose[2]));
+    Vec3 center =
+        vec3(radius * cosf(cg_radians(yaw)), c->prize_size * .5f, -radius * sinf(cg_radians(yaw)));
+    p->node->local =
+        mat4_mul(mat4_translate(center),
+                 mat4_mul(mat4_rotate_y(yaw),
+                          mat4_scale(vec3(c->prize_size, c->prize_size, c->prize_size))));
+}
+static bool spawn_sites_valid(const PrizeMachine *m) {
+    for (int p = 0; p < PRIZE_COUNT; ++p) {
+        AABB box = scene_bounds(m->prizes[p].node);
+        if (!inside_workspace(box) || fabsf(box.min.y) > .0001f)
+            return false;
+        /* The floor is an ellipse, not its enclosing AABB. Keep the whole
+         * footprint inside it, with a margin for the 64-sided floor mesh. */
+        for (int corner = 0; corner < 4; ++corner) {
+            float x = ((corner & 1 ? box.max.x : box.min.x) - 1) / 3;
+            float z = (corner & 2 ? box.max.z : box.min.z) / 3.6f;
+            if (x * x + z * z > .98f)
+                return false;
         }
+        for (int s = 0; s < m->solid_count; ++s)
+            if (aabb_overlap(box, scene_bounds(m->solids[s].node), 0))
+                return false;
+        for (int other = 0; other < p; ++other)
+            if (aabb_overlap(box, scene_bounds(m->prizes[other].node), -.12f))
+                return false;
+    }
+    return machine_pose_valid(m);
+}
+static bool spawn_move(PrizeMachine *m, int joint, float angle) {
+    const JointConfig *config = &MACHINE_CONFIG.joints[joint];
+    if (angle < config->min || angle > config->max)
+        return false;
+    m->arm.target[joint] = angle;
+    unsigned blocked_before = m->blocked_moves;
+    /* Use the same swept joint steps as gameplay, without advancing the timer
+     * or simulating gravity on the already-supported prizes. */
+    for (int step = 0; step < 4096; ++step) {
+        move_joints(m, MACHINE_CONFIG.max_step);
+        if (m->blocked_moves != blocked_before)
+            return false;
+        if (fabsf(m->arm.angle[joint] - angle) < .0001f)
+            return true;
+    }
+    return false;
+}
+static bool spawn_route_valid(PrizeMachine *m, int p) {
+    const float *pose = m->prizes[p].pickup_pose;
+    /* Start at the far end of the tray sweep so the next pickup also works
+     * after a delivery. The other aliens remain in place during validation. */
+    float tray_end = MACHINE_CONFIG.drop_yaw[PRIZE_COUNT - 1];
+    if (!spawn_move(m, 0, tray_end) || !spawn_move(m, 0, pose[0]) || !spawn_move(m, 2, pose[2]) ||
+        !spawn_move(m, 3, pose[3]) || !spawn_move(m, 1, pose[1]) ||
+        machine_capture_candidate(m, NULL) != p)
+        return false;
+    m->arm.opening_target = MACHINE_CONFIG.finger_min;
+    for (int step = 0; step < 480 && m->held < 0; ++step)
+        move_fingers(m, MACHINE_CONFIG.max_step);
+    if (m->held != p || !spawn_move(m, 1, MACHINE_CONFIG.joints[1].initial) ||
+        !spawn_move(m, 3, MACHINE_CONFIG.joints[3].initial) ||
+        !spawn_move(m, 2, MACHINE_CONFIG.joints[2].initial) || !spawn_move(m, 0, tray_end) ||
+        !spawn_move(m, 0, MACHINE_CONFIG.drop_yaw[p]))
+        return false;
+    AABB cargo = scene_bounds(m->prizes[p].node), tray = machine_delivery_region(m);
+    return cargo.min.x >= tray.min.x && cargo.max.x <= tray.max.x && cargo.min.z >= tray.min.z &&
+           cargo.max.z <= tray.max.z && cargo.min.y > tray.min.y;
+}
+static bool spawn_layout_valid(PrizeMachine *m) {
+    if (!spawn_sites_valid(m))
+        return false;
+    PrizeMachine saved = *m;
+    Mat4 local[PRIZE_COUNT];
+    for (int p = 0; p < PRIZE_COUNT; ++p)
+        local[p] = m->prizes[p].node->local;
+    for (int p = 0; p < PRIZE_COUNT; ++p) {
+        bool valid = spawn_route_valid(m, p);
+        /* Restore both the value state and the borrowed scene nodes, including
+         * failures halfway through a capture. No validation leaks into play. */
+        *m = saved;
+        for (int i = 0; i < PRIZE_COUNT; ++i)
+            m->prizes[i].node->local = local[i];
+        update_world(m);
+        if (!valid)
+            return false;
+    }
+    return true;
+}
+static bool initialize_spawns(PrizeMachine *m) {
+    const ModeConfig *mode = &GAME_MODES[m->mode];
+    uint32_t random = m->spawn_seed;
+    int slots[PRIZE_COUNT] = {0, 1, 2};
+    for (int i = PRIZE_COUNT - 1; i > 0; --i) {
+        int other = (int)(spawn_random(&random) % (uint32_t)(i + 1));
+        int swap = slots[i];
+        slots[i] = slots[other];
+        slots[other] = swap;
+    }
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        for (int p = 0; p < PRIZE_COUNT; ++p) {
+            int index = mode->spawn_pose_first +
+                        (int)(spawn_random(&random) % (uint32_t)mode->spawn_pose_count);
+            int jitter = (int)(spawn_random(&random) % (uint32_t)(2 * mode->spawn_yaw_jitter + 1)) -
+                         mode->spawn_yaw_jitter;
+            place_spawn(&m->prizes[p], SPAWN_POSES[index],
+                        MACHINE_CONFIG.prize_yaw[slots[p]] + jitter);
+        }
+        update_world(m);
+        if (spawn_layout_valid(m))
+            return true;
+    }
+    /* Bounded retries, then the original reachable layout with shuffled colors.
+     * Recheck it too, so future cabinet changes cannot introduce an unsafe spawn. */
+    for (int p = 0; p < PRIZE_COUNT; ++p)
+        place_spawn(&m->prizes[p], PICKUP_POSE, MACHINE_CONFIG.prize_yaw[slots[p]]);
+    update_world(m);
+    return spawn_layout_valid(m);
 }
 void machine_update(PrizeMachine *m, float dt) {
-    if (!isfinite(dt) || dt <= 0)
+    if (!isfinite(dt) || dt <= 0 || m->round != ROUND_PLAYING)
         return;
-    /* Pause stalls are capped; each accepted slice has bounded angular motion. */
+    float elapsed = dt;
+    bool timed = GAME_MODES[m->mode].time_limit > 0;
+    if (timed)
+        dt = fminf(dt, m->time_remaining);
+    /* Cap physics work after stalls, but account for the full elapsed clock time. */
     dt = fminf(dt, .10f);
-    m->message_time = fmaxf(0, m->message_time - dt);
+    m->message_time = fmaxf(0, m->message_time - elapsed);
     int steps = (int)ceilf(dt / MACHINE_CONFIG.max_step);
-    float step = dt / (float)steps;
+    float step = steps > 0 ? dt / (float)steps : 0;
     for (int i = 0; i < steps; ++i) {
+        int held = m->held;
+        Vec3 before =
+            held >= 0 ? mat4_point(m->prizes[held].node->world, vec3(0, 0, 0)) : vec3(0, 0, 0);
         move_joints(m, step);
         move_fingers(m, step);
-        fall(m, step);
+        if (held >= 0 && m->held == held) {
+            Vec3 after = mat4_point(m->prizes[held].node->world, vec3(0, 0, 0));
+            m->held_velocity =
+                machine_at_target(m) ? vec3(0, 0, 0) : v3_scale(v3_sub(after, before), 1 / step);
+        }
+        int delivered = m->delivered;
+        physics_step(m, step);
         if (m->release_contact >= 0) {
             AABB p = scene_bounds(m->prizes[m->release_contact].node);
             if (!aabb_overlap(p, scene_bounds(m->arm.parts[3]), 0) &&
                 !aabb_overlap(p, scene_bounds(m->arm.parts[4]), 0))
                 m->release_contact = -1;
         }
+        if (timed)
+            m->time_remaining = fmaxf(0, m->time_remaining - step);
+        if (m->delivered > delivered)
+            message(m, "Entrega concluida!");
+        if (m->delivered == PRIZE_COUNT) {
+            m->round = ROUND_WON;
+            message(m, "Tripulacao resgatada! R: repetir. P: pausa.");
+            return;
+        }
+    }
+    if (timed) {
+        m->time_remaining = fmaxf(0, m->time_remaining - fmaxf(0, elapsed - dt));
+        if (m->time_remaining <= .00001f) {
+            m->time_remaining = 0;
+            m->round = ROUND_LOST;
+            message(m, "Tempo esgotado! R: repetir. P: pausa.");
+        }
     }
 }
 int machine_pick(PrizeMachine *m, Ray ray) {
+    if (m->round != ROUND_PLAYING)
+        return -1;
     float closest = FLT_MAX;
     int selected = -1;
     for (int s = 0; s < m->solid_count; ++s) {
@@ -528,7 +676,7 @@ const char *prize_state_name(PrizeState state) {
     case PRIZE_HELD:
         return "Na garra";
     case PRIZE_FALLING:
-        return "Em queda";
+        return "Em movimento";
     case PRIZE_DELIVERED:
         return "Entregue";
     }

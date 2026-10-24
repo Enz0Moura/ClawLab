@@ -14,6 +14,6 @@ typedef enum {
     THEME_DETAILS
 } ThemePart;
 Geometry *theme_cabinet_create(ThemePart part);
-Geometry *theme_alien_create(Color badge);
+Geometry *theme_alien_create(Color uniform);
 
 #endif

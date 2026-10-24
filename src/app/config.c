@@ -26,3 +26,9 @@ const MachineConfig MACHINE_CONFIG = {
     .tray_size = {2.5f, .12f, 1.6f},
     .workspace = {{-1.8f, 0, -3.4f}, {3.7f, 4.4f, 3.4f}}};
 const float PICKUP_POSE[JOINT_COUNT] = {0, -45, -85, -50};
+const ModeConfig GAME_MODES[MODE_COUNT] = {
+    {"Sandbox", 0, .18f, 5, 5, 3, 1},
+    {"Facil", 240, .30f, 4, 5, 3, 1},
+    {"Medio", 180, .55f, 3, 10, 2, 3},
+    {"Dificil", 120, .78f, 2, 15, 0, 7},
+};

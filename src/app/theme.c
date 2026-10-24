@@ -137,9 +137,9 @@ static void fin(Builder *b, float side) {
         quad(b, p[0][a], p[0][c], p[1][c], p[1][a], RED);
     }
 }
-Geometry *theme_alien_create(Color badge) {
+Geometry *theme_alien_create(Color uniform) {
     Builder b = begin_mesh();
-    ellipsoid(&b, vec3(0, -.22f, 0), vec3(.48f, .38f, .37f), BLUE);
+    ellipsoid(&b, vec3(0, -.22f, 0), vec3(.48f, .38f, .37f), uniform);
     ellipsoid(&b, vec3(0, .13f, 0), vec3(.72f, .46f, .48f), GREEN);
     for (int side = -1; side <= 1; side += 2) {
         ellipsoid(&b, vec3(side * .40f, .16f, 0), vec3(.20f, .14f, .12f), GREEN);
@@ -154,7 +154,7 @@ Geometry *theme_alien_create(Color badge) {
         ellipsoid(&b, vec3(eye * .16f, .18f, .276f), vec3(.045f, .06f, .024f), INK);
     }
     ellipsoid(&b, vec3(0, .015f, .224f), vec3(.13f, .045f, .026f), INK);
-    ellipsoid(&b, vec3(.04f, -.17f, .185f), vec3(.10f, .10f, .035f), badge);
+    ellipsoid(&b, vec3(.04f, -.17f, .185f), vec3(.10f, .10f, .035f), BLUE);
     ring(&b, vec3(.04f, -.17f, .207f), .076f, .024f, .008f, YELLOW);
     Mat4 facing = mat4_rotate_y(35);
     for (size_t i = 0; i < b.count; ++i) {
