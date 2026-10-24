@@ -6,7 +6,7 @@ Biblioteca de computação gráfica com OOP em **C11** e simulador 3D de uma má
 de prêmios, usando **OpenGL e freeglut**. O braço tem base, ombro, cotovelo, punho
 e dois dedos articulados. Controle as juntas, capture três alienígenas e solte-os na
 bandeja. A captura é determinística; o modo escolhido define o tempo, a intensidade
-dos quiques e a variação das posições iniciais dos aliens.
+dos quiques, a variação das posições iniciais dos aliens e o tamanho da bandeja.
 
 O visual é inspirado na máquina do **Pizza Planet, de Toy Story**.
 
@@ -45,12 +45,17 @@ livre: botão direito olha ao redor e a roda avança ou recua. **Home** restaura
 
 ## Modos de jogo
 
-| Modo | Tempo | Posições iniciais | Colisões |
-| --- | --- | --- | --- |
-| Sandbox | Sem limite | Pequena variação angular, distância constante | Quiques suaves para praticar |
-| Fácil | 4 minutos | Pequena variação angular, distância constante | Quiques leves e maior amortecimento |
-| Médio | 3 minutos | Mais variação angular e três distâncias possíveis | Quiques moderados |
-| Difícil | 2 minutos | Maior variação angular e sete distâncias possíveis | Quiques fortes e menor amortecimento |
+| Modo | Tempo | Bandeja (largura × profundidade) | Posições iniciais | Colisões |
+| --- | --- | --- | --- | --- |
+| Sandbox | Sem limite | 2,50 × 1,60 | Pequena variação angular, distância constante | Quiques suaves para praticar |
+| Fácil | 4 minutos | 2,35 × 1,40 | Pequena variação angular, distância constante | Quiques leves e maior amortecimento |
+| Médio | 3 minutos | 2,20 × 1,20 | Mais variação angular e três distâncias possíveis | Quiques moderados |
+| Difícil | 2 minutos | 2,05 × 1,00 | Maior variação angular e sete distâncias possíveis | Quiques fortes e menor amortecimento |
+
+As medidas usam unidades do cenário. A bandeja diminui em largura e profundidade,
+mantendo o centro e a altura. Mesmo no difícil, cabem três aliens separados;
+a validação dos spawns exige uma rota de entrega com margem nas bordas.
+O reset mantém o tamanho do modo atual, e a pausa preserva a partida.
 
 Cada nova partida ou reset sorteia as posições e embaralha as cores entre elas.
 Os aliens começam apoiados no piso, separados entre si e fora da bandeja e dos
