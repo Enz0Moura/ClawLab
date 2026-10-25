@@ -29,7 +29,7 @@ make lib       # build/libcg.a, independent of the application
 make demo      # build build/library_demo
 make example   # run the standalone example
 make run       # build and run build/prize_machine
-make test      # math, states, paths and allocation failures
+make test      # math, states, paths and allocation failures (~1 min)
 make sanitize  # the same tests with Clang, ASan and UBSan
 make smoke     # full automated graphical session; requires a display
 make clean     # remove build/
@@ -72,9 +72,21 @@ aliens and score. In the pause menu, **Resetar partida** restarts the current mo
 and **Voltar aos modos** ends the game to choose another mode. **R** also restarts
 during gameplay. Help freezes the timer. Victory or timeout ends the round.
 
+## Project layout
+
+```text
+include/cg/   public library headers
+src/cg/       library: math, geometries, scene, camera, rendering
+src/app/      simulator: machine, alien physics, interface, configuration and theme
+examples/     standalone example that uses only the library
+tests/        logic and allocation-failure tests
+docs/         user manuals (PT and EN)
+```
+
 ## Documentation
 
-See the [user manual](docs/USER_MANUAL.md).
+See the [user manual](docs/USER_MANUAL.md) ([Português](docs/MANUAL_DO_USUARIO.md)).
+It has a first-game walkthrough, all the controls and the capture and delivery rules.
 
 Validated on CachyOS Linux, freeglut 3.8.0 and OpenGL 4.6 compatibility/NVIDIA.
 Uses conservative AABBs, gravity, bouncing collisions and simplified friction in

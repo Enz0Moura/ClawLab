@@ -29,7 +29,7 @@ make lib       # build/libcg.a, independente da aplicação
 make demo      # compila build/library_demo
 make example   # executa o exemplo independente
 make run       # compila e executa build/prize_machine
-make test      # matemática, estados, trajetórias e falhas de alocação
+make test      # matemática, estados, trajetórias e falhas de alocação (~1 min)
 make sanitize  # os mesmos testes com Clang, ASan e UBSan
 make smoke     # sessão gráfica automática completa; requer display
 make clean     # remove build/
@@ -70,9 +70,22 @@ Na pausa, **Resetar partida** reinicia o modo atual e **Voltar aos modos** encer
 a partida para escolher outro modo. **R** também reinicia durante o jogo.
 A ajuda congela o tempo. Vitória ou tempo esgotado encerram a rodada.
 
+## Estrutura do projeto
+
+```text
+include/cg/   cabeçalhos públicos da biblioteca
+src/cg/       biblioteca: matemática, geometrias, cena, câmera, renderização
+src/app/      simulador: máquina, física dos aliens, interface, configuração e tema
+examples/     exemplo independente que usa só a biblioteca
+tests/        testes de lógica e de falha de alocação
+docs/         manuais do usuário (PT e EN)
+```
+
 ## Documentação
 
-Veja o [manual do usuário](docs/MANUAL_DO_USUARIO.md).
+Veja o [manual do usuário](docs/MANUAL_DO_USUARIO.md) ([English](docs/USER_MANUAL.md)).
+Ele traz um passo a passo da primeira partida, todos os controles e as regras
+de captura e entrega.
 
 Validado em CachyOS Linux, freeglut 3.8.0 e OpenGL de compatibilidade 4.6/NVIDIA.
 Usa AABBs conservadoras, gravidade, colisões com quique e atrito simplificado numa
