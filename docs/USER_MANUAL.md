@@ -173,8 +173,7 @@ the scene disappears to avoid obscuring other prizes.
 
 **Joints:** the lime green row is the active joint. The large number is the
 **current** angle in degrees; the range in brackets is its limit. Angles change
-gradually after pressing the buttons. Wait for the desired value before
-moving to the next step of the walkthrough.
+gradually after pressing the buttons.
 
 | Joint | Initial | Limits |
 | --- | ---: | ---: |

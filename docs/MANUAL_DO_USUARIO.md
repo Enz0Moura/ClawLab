@@ -167,8 +167,7 @@ capturado novamente. Seus rótulos na cena desaparecem para não encobrir os dem
 
 **Juntas:** a linha verde-limão é a junta ativa. O número grande é o ângulo
 **atual**, em graus; o intervalo entre colchetes é o limite. Os ângulos mudam
-gradualmente depois de pressionar os botões. Aguarde o valor desejado antes de
-executar a próxima etapa do tutorial.
+gradualmente depois de pressionar os botões.
 
 | Junta | Inicial | Limites |
 | --- | ---: | ---: |
