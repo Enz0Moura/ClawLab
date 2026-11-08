@@ -40,8 +40,8 @@ make clean     # remove build/
 `build/libcg.a`. Choose a mode in the menu with the mouse or **1–4**.
 To play: click a prize; select a joint with **1–4**;
 use **←/→** or **+/−**; **C** closes, **O** opens, **H** shows help.
-Press **I** to toggle mouse driven IK; click an alien or the floor to set the
-gripper target.
+Press **I** to make the claw follow the cursor; click an alien to start
+automatic capture. Click the floor to set a target without closing the claw.
 The right mouse button and wheel control the camera. **R** resets; **D** toggles
 debug views. The simulator's interface is in Portuguese; the English manual
 explains its labels while preserving the actual names and key bindings.

@@ -16,9 +16,37 @@ static int drag_button = -1;
 static const char *screenshot;
 static int exit_code = EXIT_SUCCESS, smoke_phase, smoke_prize, smoke_frames;
 static float smoke_wait;
+static bool smoke_ik_capture_started, smoke_ik_capture_done;
+static float smoke_ik_capture_wait;
 static const char *pending_capture;
 static int smoke_menu_phase;
 
+typedef enum {
+    IK_CAPTURE_IDLE,
+    IK_CAPTURE_OPENING,
+    IK_CAPTURE_APPROACHING,
+    IK_CAPTURE_CLOSING
+} IkCapturePhase;
+static IkCapturePhase ik_capture_phase;
+static int ik_capture_prize = -1, ik_capture_retargets;
+static Vec3 cursor_ik_target, cursor_ik_solved_target;
+static bool cursor_ik_pending, cursor_ik_has_solved_target;
+static float cursor_ik_cooldown;
+
+static void clear_ik_interaction(void) {
+    ik_capture_phase = IK_CAPTURE_IDLE;
+    ik_capture_prize = -1;
+    ik_capture_retargets = 0;
+    cursor_ik_pending = false;
+    cursor_ik_has_solved_target = false;
+    cursor_ik_cooldown = 0;
+}
+static void app_message(const char *text) {
+    if (!machine || !text)
+        return;
+    snprintf(machine->message, sizeof(machine->message), "%s", text);
+    machine->message_time = 2.5f;
+}
 static void reset_camera(void) {
     ui.camera = camera_default();
     ui.free_camera = false;
@@ -31,6 +59,7 @@ static void choose_mode(GameMode mode) {
     }
     ui.menu = ui.help = ui.paused = false;
     ui.ik_mode = false;
+    clear_ik_interaction();
     reset_camera();
     ui.active_joint = held_direction = 0;
     last_time = glutGet(GLUT_ELAPSED_TIME);
@@ -42,10 +71,145 @@ static void return_to_modes(void) {
     }
     ui.menu = true;
     ui.help = ui.paused = false;
+    ui.ik_mode = false;
+    clear_ik_interaction();
     reset_camera();
     ui.active_joint = 0;
     held_direction = 0;
     last_time = glutGet(GLUT_ELAPSED_TIME);
+}
+static void stop_ik_motion(void) {
+    if (!machine)
+        return;
+    for (int joint = 0; joint < JOINT_COUNT; ++joint)
+        machine_target_joint(machine, joint, machine->arm.angle[joint]);
+}
+static void cancel_ik_capture(void) {
+    if (ik_capture_phase == IK_CAPTURE_APPROACHING || ik_capture_phase == IK_CAPTURE_OPENING)
+        stop_ik_motion();
+    if (ik_capture_phase == IK_CAPTURE_CLOSING && machine && machine->held < 0)
+        machine_open(machine);
+    ik_capture_phase = IK_CAPTURE_IDLE;
+    ik_capture_prize = -1;
+    ik_capture_retargets = 0;
+}
+static void set_cursor_ik_target(int x, int y) {
+    if (!ui.ik_mode || ui.menu || ui.help || ui.paused || ik_capture_phase != IK_CAPTURE_IDLE)
+        return;
+    if (x < 0 || x >= ui_view_width(&ui) || y < UI_TOP || y >= ui.height - UI_BOTTOM) {
+        cursor_ik_pending = false;
+        return;
+    }
+
+    Ray ray;
+    if (!camera_ray(&ui.camera, (float)x, (float)(y - UI_TOP), ui_view_width(&ui),
+                    ui_view_height(&ui), &ray) || fabsf(ray.direction.y) < 1e-6f) {
+        cursor_ik_pending = false;
+        return;
+    }
+
+    float target_y = MACHINE_CONFIG.prize_size * .5f;
+    float distance = (target_y - ray.origin.y) / ray.direction.y;
+    if (distance <= 0) {
+        cursor_ik_pending = false;
+        return;
+    }
+
+    Vec3 target = v3_add(ray.origin, v3_scale(ray.direction, distance));
+    AABB workspace = MACHINE_CONFIG.workspace;
+    target.x = fminf(workspace.max.x, fmaxf(workspace.min.x, target.x));
+    target.z = fminf(workspace.max.z, fmaxf(workspace.min.z, target.z));
+    target.y = target_y;
+    cursor_ik_target = target;
+    cursor_ik_pending = true;
+}
+static void begin_ik_capture(int prize) {
+    if (prize < 0 || prize >= PRIZE_COUNT || machine->held >= 0 ||
+        machine->prizes[prize].state != PRIZE_AVAILABLE)
+        return;
+
+    cancel_ik_capture();
+    stop_ik_motion();
+    cursor_ik_pending = false;
+    ik_capture_prize = prize;
+    ik_capture_retargets = 0;
+    ik_capture_phase = IK_CAPTURE_OPENING;
+    machine_open(machine);
+}
+static void update_ik_interaction_before_step(float dt) {
+    if (ik_capture_phase == IK_CAPTURE_IDLE) {
+        if (!ui.ik_mode || !cursor_ik_pending)
+            return;
+        cursor_ik_cooldown += dt;
+        if (!machine_at_target(machine) || cursor_ik_cooldown < .12f)
+            return;
+        Vec3 target = cursor_ik_target;
+        cursor_ik_pending = false;
+        cursor_ik_cooldown = 0;
+        if (cursor_ik_has_solved_target &&
+            v3_length(v3_sub(target, cursor_ik_solved_target)) < .025f)
+            return;
+        cursor_ik_solved_target = target;
+        cursor_ik_has_solved_target = true;
+        machine_solve_ik(machine, target, NULL);
+        return;
+    }
+
+    if (ik_capture_prize < 0 || ik_capture_prize >= PRIZE_COUNT || machine->held >= 0 ||
+        machine->prizes[ik_capture_prize].state != PRIZE_AVAILABLE) {
+        cancel_ik_capture();
+        return;
+    }
+
+    if (ik_capture_phase == IK_CAPTURE_OPENING && machine_at_target(machine)) {
+        Vec3 target = mat4_point(machine->prizes[ik_capture_prize].node->world, vec3(0, 0, 0));
+        ik_capture_phase = IK_CAPTURE_APPROACHING;
+        machine_solve_ik(machine, target, NULL);
+    } else if (ik_capture_phase == IK_CAPTURE_CLOSING &&
+               machine_capture_candidate(machine, NULL) != ik_capture_prize) {
+        /* The alien moved out of the safe capture pose: stop the closing motion. */
+        machine_open(machine);
+        ik_capture_phase = IK_CAPTURE_IDLE;
+        ik_capture_prize = -1;
+        ik_capture_retargets = 0;
+    }
+}
+static void update_ik_interaction_after_step(void) {
+    if (ik_capture_phase == IK_CAPTURE_IDLE)
+        return;
+    if (ik_capture_prize < 0 || ik_capture_prize >= PRIZE_COUNT) {
+        cancel_ik_capture();
+        return;
+    }
+    if (machine->held == ik_capture_prize) {
+        ik_capture_phase = IK_CAPTURE_IDLE;
+        ik_capture_prize = -1;
+        ik_capture_retargets = 0;
+        return;
+    }
+    if (machine->held >= 0 || machine->prizes[ik_capture_prize].state != PRIZE_AVAILABLE) {
+        cancel_ik_capture();
+        return;
+    }
+    if (ik_capture_phase != IK_CAPTURE_APPROACHING || !machine_at_target(machine))
+        return;
+
+    Vec3 prize_position =
+        mat4_point(machine->prizes[ik_capture_prize].node->world, vec3(0, 0, 0));
+    if (v3_length(v3_sub(prize_position, machine->ik_target)) > .04f && ik_capture_retargets < 3) {
+        ++ik_capture_retargets;
+        machine_solve_ik(machine, prize_position, NULL);
+        return;
+    }
+    if (machine_capture_candidate(machine, NULL) == ik_capture_prize) {
+        machine_close(machine);
+        ik_capture_phase = IK_CAPTURE_CLOSING;
+    } else {
+        ik_capture_phase = IK_CAPTURE_IDLE;
+        ik_capture_prize = -1;
+        ik_capture_retargets = 0;
+        app_message("Captura cancelada: garra fora da pose segura.");
+    }
 }
 static void toggle_pause(void) {
     ui.paused = !ui.paused;
@@ -83,6 +247,7 @@ static void reset(void) {
     reset_camera();
     ui.paused = ui.help = false;
     ui.ik_mode = false;
+    clear_ik_interaction();
     ui.active_joint = 0;
     held_direction = 0;
     last_time = glutGet(GLUT_ELAPSED_TIME);
@@ -114,6 +279,10 @@ static void key(unsigned char k, int x, int y) {
     }
     if (ui.help && k != 'h')
         return;
+    if (ik_capture_phase != IK_CAPTURE_IDLE &&
+        ((k >= '1' && k <= '4') || k == '+' || k == '=' || k == '-' || k == '_' || k == '[' ||
+         k == ']' || k == 'c' || k == 'o' || k == ' ' || k == 'r'))
+        cancel_ik_capture();
     if (k >= '1' && k <= '4') {
         ui.active_joint = k - '1';
         held_direction = 0;
@@ -154,6 +323,15 @@ static void key(unsigned char k, int x, int y) {
         drag_button = -1;
         break;
     case 'i':
+        if (ui.ik_mode) {
+            cancel_ik_capture();
+            stop_ik_motion();
+            cursor_ik_pending = false;
+        } else {
+            cursor_ik_pending = false;
+            cursor_ik_has_solved_target = false;
+            cursor_ik_cooldown = 0;
+        }
         ui.ik_mode = !ui.ik_mode;
         machine->message_time = 0;
         break;
@@ -180,6 +358,8 @@ static void special(int k, int x, int y) {
     }
     if (ui.help)
         return;
+    if (k == GLUT_KEY_LEFT || k == GLUT_KEY_RIGHT)
+        cancel_ik_capture();
     if (k == GLUT_KEY_LEFT)
         held_direction = -1;
     if (k == GLUT_KEY_RIGHT)
@@ -246,26 +426,18 @@ static void mouse(int button, int state, int x, int y) {
                 machine_pick(machine, ray);
             } else {
                 int prize = machine_pick(machine, ray);
-                Vec3 target;
-                bool has_target = false;
-                if (prize >= 0) {
-                    target = mat4_point(machine->prizes[prize].node->world, vec3(0, 0, 0));
-                    has_target = true;
-                } else if (fabsf(ray.direction.y) > 1e-6f) {
-                    /* Empty-space clicks define a target over the floor plane,
-                     * at the center height of a floor-supported prize. */
-                    float distance = (MACHINE_CONFIG.prize_size * .5f - ray.origin.y) /
-                                     ray.direction.y;
-                    if (distance > 0) {
-                        target = v3_add(ray.origin, v3_scale(ray.direction, distance));
-                        has_target = true;
-                    }
+                if (prize >= 0)
+                    begin_ik_capture(prize);
+                else {
+                    cancel_ik_capture();
+                    set_cursor_ik_target(x, y);
                 }
-                if (has_target)
-                    machine_solve_ik(machine, target, NULL);
             }
         }
     }
+}
+static void passive_motion(int x, int y) {
+    set_cursor_ik_target(x, y);
 }
 static void motion(int x, int y) {
     if (ui.menu || ui.help || ui.paused)
@@ -310,7 +482,9 @@ static void update_game(float dt) {
                              machine->arm.angle[ui.active_joint] +
                                  (float)held_direction *
                                      MACHINE_CONFIG.joints[ui.active_joint].speed * fminf(dt, .1f));
+    update_ik_interaction_before_step(dt);
     machine_update(machine, dt);
+    update_ik_interaction_after_step();
 }
 static void smoke_target(int joint, float value) {
     key((unsigned char)('1' + joint), 0, 0);
@@ -501,6 +675,44 @@ static void smoke_step(float dt) {
             smoke_pause_click(0);
         return;
     }
+    if (smoke_phase == 0 && !smoke_ik_capture_done) {
+        if (!smoke_ik_capture_started) {
+            mouse(GLUT_RIGHT_BUTTON, GLUT_DOWN, 400, 300);
+            motion(486, 300);
+            mouse(GLUT_RIGHT_BUTTON, GLUT_UP, 486, 300);
+            Vec3 screen;
+            if (!camera_project(&ui.camera,
+                                mat4_point(machine->prizes[smoke_prize].node->world, vec3(0, 0, 0)),
+                                ui_view_width(&ui), ui_view_height(&ui), &screen)) {
+                quit_failure("project prize for IK mouse capture");
+                return;
+            }
+            int mouse_x = (int)lroundf(screen.x), mouse_y = (int)lroundf(screen.y) + UI_TOP;
+            key('i', 0, 0);
+            passive_motion(mouse_x, mouse_y);
+            mouse(GLUT_LEFT_BUTTON, GLUT_DOWN, mouse_x, mouse_y);
+            if (!ui.ik_mode || machine->selected != smoke_prize ||
+                ik_capture_phase != IK_CAPTURE_OPENING || cursor_ik_pending) {
+                quit_failure("IK cursor and alien-click capture input");
+                return;
+            }
+            smoke_ik_capture_started = true;
+            smoke_ik_capture_wait = 0;
+        } else {
+            smoke_ik_capture_wait += dt;
+            if (machine->held == smoke_prize) {
+                key('i', 0, 0);
+                key('r', 0, 0);
+                smoke_ik_capture_done = true;
+                smoke_ik_capture_wait = smoke_wait = 0;
+                smoke_frames = 0;
+            } else if (smoke_ik_capture_wait > 25) {
+                quit_failure("IK cursor click did not capture the selected alien safely");
+                return;
+            }
+        }
+        return;
+    }
     if (++smoke_frames > 2400) {
         quit_failure("timeout");
         return;
@@ -687,7 +899,8 @@ static void smoke_step(float dt) {
     }
     case 15:
         puts("prize_machine: graphical session passed (pause/resume, frozen state and timer, "
-             "difficulty trays, random spawns, reset, return to modes, all 3 prizes, free camera, "
+             "difficulty trays, random spawns, reset, return to modes, IK cursor capture, all 3 "
+             "prizes, free camera, "
              "collision, delivery, timeout)");
         glutLeaveMainLoop();
         break;
@@ -758,6 +971,7 @@ int main(int argc, char **argv) {
     glutSpecialUpFunc(special_up);
     glutMouseFunc(mouse);
     glutMotionFunc(motion);
+    glutPassiveMotionFunc(passive_motion);
     glutMouseWheelFunc(wheel);
     glutEntryFunc(entry);
     glutCloseFunc(cleanup);

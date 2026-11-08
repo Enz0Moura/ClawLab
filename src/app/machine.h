@@ -7,6 +7,7 @@
 
 typedef enum { PRIZE_AVAILABLE, PRIZE_HELD, PRIZE_FALLING, PRIZE_DELIVERED } PrizeState;
 typedef enum { ROUND_PLAYING, ROUND_WON, ROUND_LOST } RoundState;
+enum { MACHINE_IK_PATH_MAX = 128 };
 typedef struct {
     SceneNode *node; /* All node references are borrowed from root. */
     PrizeState state;
@@ -36,6 +37,8 @@ typedef struct {
     Vec3 ik_target;
     float ik_error;
     bool ik_target_active;
+    float ik_path[MACHINE_IK_PATH_MAX][JOINT_COUNT];
+    int ik_path_count, ik_path_index;
     GameMode mode;
     RoundState round;
     float time_remaining;
@@ -58,8 +61,9 @@ void machine_close(PrizeMachine *machine);
 int machine_pick(PrizeMachine *machine, Ray ray); /* Sets selected, returns ID or -1. */
 int machine_capture_candidate(const PrizeMachine *machine, float *required_gap);
 Vec3 machine_grip_position(const PrizeMachine *machine);
-/* CCD position IK. A false result can still leave the joints targeting the
- * closest pose found; error reports the remaining world-space distance. */
+/* Collision-aware CCD position IK. error reports the remaining world-space
+ * distance; false means the target is outside tolerance or no safe route was
+ * found (the closest safe approximation may still be scheduled). */
 bool machine_solve_ik(PrizeMachine *machine, Vec3 target, float *error);
 AABB machine_delivery_region(const PrizeMachine *machine);
 bool machine_pose_valid(const PrizeMachine *machine); /* Current scene matrices must be updated. */

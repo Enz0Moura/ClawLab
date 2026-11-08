@@ -311,6 +311,33 @@ static void test_inverse_kinematics(void) {
     CHECK(m->ik_error < .05f);
     CHECK(v3_length(v3_sub(machine_grip_position(m), goal)) <= .05f);
 
+    /* Selecting an alien aims at its center and retargeting during motion
+     * replaces the route from the arm's current pose. */
+    Vec3 prize_goal = mat4_point(m->prizes[0].node->world, vec3(0, 0, 0));
+    CHECK(machine_solve_ik(m, prize_goal, &solution_error));
+    CHECK(m->ik_path_count > 0);
+    float base_before_nudge = m->arm.angle[0];
+    machine_nudge_joint(m, 0, 1);
+    CHECK(m->ik_path_count == 0);
+    CHECK(near(m->arm.target[0], base_before_nudge + 1));
+    for (int joint = 1; joint < JOINT_COUNT; ++joint)
+        CHECK(near(m->arm.target[joint], m->arm.angle[joint]));
+    CHECK(!m->ik_target_active);
+    prize_goal = mat4_point(m->prizes[1].node->world, vec3(0, 0, 0));
+    CHECK(machine_solve_ik(m, prize_goal, &solution_error));
+    CHECK(solution_error <= .05f);
+    advance(m, 15);
+    CHECK(m->ik_error <= .05f);
+    CHECK(machine_capture_candidate(m, NULL) == 1);
+    CHECK(machine_pose_valid(m));
+    prize_goal = mat4_point(m->prizes[2].node->world, vec3(0, 0, 0));
+    CHECK(machine_solve_ik(m, prize_goal, &solution_error));
+    advance(m, 15);
+    CHECK(m->ik_error <= .05f);
+    CHECK(machine_capture_candidate(m, NULL) == 2);
+    CHECK(machine_pose_valid(m));
+    CHECK(m->blocked_moves == 0);
+
     /* An in-envelope but unreachable point returns the best bounded pose. */
     CHECK(!machine_solve_ik(m, vec3(3.6f, 4.3f, 3.3f), &solution_error));
     CHECK(solution_error > .05f);

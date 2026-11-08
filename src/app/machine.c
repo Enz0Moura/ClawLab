@@ -244,29 +244,192 @@ bool machine_start(PrizeMachine *m, GameMode mode) {
 Vec3 machine_grip_position(const PrizeMachine *m) {
     return mat4_point(m->arm.grip->world, vec3(0, 0, 0));
 }
-bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
+
+enum { IK_RRT_MAX_NODES = 1200 };
+#define IK_RRT_MAX_ANGLE_STEP .5f
+typedef struct {
+    float angle[JOINT_COUNT];
+    int parent;
+} IkNode;
+
+static bool pose_valid_at(PrizeMachine *m, const float angle[JOINT_COUNT]) {
+    float saved[JOINT_COUNT];
+    memcpy(saved, m->arm.angle, sizeof(saved));
+    memcpy(m->arm.angle, angle, sizeof(saved));
+    update_world(m);
+    bool valid = machine_pose_valid(m);
+    memcpy(m->arm.angle, saved, sizeof(saved));
+    update_world(m);
+    return valid;
+}
+
+static bool ik_segment_valid(PrizeMachine *m, const float from[JOINT_COUNT],
+                             const float to[JOINT_COUNT]) {
+    float largest = 0;
+    for (int joint = 0; joint < JOINT_COUNT; ++joint)
+        largest = fmaxf(largest, fabsf(to[joint] - from[joint]));
+    int steps = (int)ceilf(largest / (float)IK_RRT_MAX_ANGLE_STEP);
+    if (steps < 1)
+        steps = 1;
+    float pose[JOINT_COUNT];
+    for (int step = 1; step <= steps; ++step) {
+        float fraction = (float)step / (float)steps;
+        for (int joint = 0; joint < JOINT_COUNT; ++joint)
+            pose[joint] = from[joint] + (to[joint] - from[joint]) * fraction;
+        if (!pose_valid_at(m, pose))
+            return false;
+    }
+    return true;
+}
+
+static uint32_t ik_random(uint32_t *state) {
+    uint32_t value = *state;
+    value ^= value << 13;
+    value ^= value >> 17;
+    value ^= value << 5;
+    *state = value ? value : UINT32_C(0x6d2b79f5);
+    return *state;
+}
+
+static float ik_random_range(uint32_t *state, float minimum, float maximum) {
+    float unit = (float)(ik_random(state) >> 8) / 16777215.0f;
+    return minimum + (maximum - minimum) * unit;
+}
+
+static float ik_joint_distance_squared(const float a[JOINT_COUNT],
+                                       const float b[JOINT_COUNT]) {
+    float distance = 0;
+    for (int joint = 0; joint < JOINT_COUNT; ++joint) {
+        float delta = a[joint] - b[joint];
+        distance += delta * delta;
+    }
+    return distance;
+}
+
+static bool plan_ik_path(PrizeMachine *m, const float start[JOINT_COUNT],
+                         const float goal[JOINT_COUNT], int *path_count,
+                         float path[MACHINE_IK_PATH_MAX][JOINT_COUNT]) {
+    if (!pose_valid_at(m, start) || !pose_valid_at(m, goal))
+        return false;
+    if (ik_segment_valid(m, start, goal)) {
+        memcpy(path[0], goal, sizeof(path[0]));
+        *path_count = 1;
+        return true;
+    }
+
+    IkNode nodes[IK_RRT_MAX_NODES];
+    memcpy(nodes[0].angle, start, sizeof(nodes[0].angle));
+    nodes[0].parent = -1;
+    int count = 1, connection = -1;
+    uint32_t random = UINT32_C(0x9e3779b9);
+    for (int joint = 0; joint < JOINT_COUNT; ++joint) {
+        uint32_t bits;
+        memcpy(&bits, &start[joint], sizeof(bits));
+        random ^= bits + UINT32_C(0x9e3779b9) + (random << 6) + (random >> 2);
+        memcpy(&bits, &goal[joint], sizeof(bits));
+        random ^= bits + UINT32_C(0x9e3779b9) + (random << 6) + (random >> 2);
+    }
+    if (!random)
+        random = UINT32_C(0x6d2b79f5);
+
+    for (int iteration = 0; iteration < IK_RRT_MAX_NODES - 1; ++iteration) {
+        float sample[JOINT_COUNT];
+        if (iteration % 5 == 0) {
+            memcpy(sample, goal, sizeof(sample));
+        } else {
+            for (int joint = 0; joint < JOINT_COUNT; ++joint) {
+                const JointConfig *limits = &MACHINE_CONFIG.joints[joint];
+                sample[joint] = ik_random_range(&random, limits->min, limits->max);
+            }
+        }
+
+        int nearest = 0;
+        float nearest_distance = ik_joint_distance_squared(nodes[0].angle, sample);
+        for (int node = 1; node < count; ++node) {
+            float distance = ik_joint_distance_squared(nodes[node].angle, sample);
+            if (distance < nearest_distance) {
+                nearest = node;
+                nearest_distance = distance;
+            }
+        }
+
+        float largest = 0;
+        for (int joint = 0; joint < JOINT_COUNT; ++joint)
+            largest = fmaxf(largest, fabsf(sample[joint] - nodes[nearest].angle[joint]));
+        if (largest < .01f)
+            continue;
+        float scale = fminf(1.0f, 14.0f / largest);
+        float next[JOINT_COUNT];
+        for (int joint = 0; joint < JOINT_COUNT; ++joint)
+            next[joint] = nodes[nearest].angle[joint] +
+                          (sample[joint] - nodes[nearest].angle[joint]) * scale;
+        if (!ik_segment_valid(m, nodes[nearest].angle, next))
+            continue;
+
+        int added = count++;
+        memcpy(nodes[added].angle, next, sizeof(nodes[added].angle));
+        nodes[added].parent = nearest;
+        float goal_delta = 0;
+        for (int joint = 0; joint < JOINT_COUNT; ++joint)
+            goal_delta = fmaxf(goal_delta, fabsf(goal[joint] - next[joint]));
+        if (goal_delta <= 18.0f && ik_segment_valid(m, next, goal)) {
+            connection = added;
+            break;
+        }
+    }
+    if (connection < 0)
+        return false;
+
+    int reverse[IK_RRT_MAX_NODES], route_count = 0;
+    for (int node = connection; node > 0; node = nodes[node].parent)
+        reverse[route_count++] = node;
+    float route[IK_RRT_MAX_NODES + 1][JOINT_COUNT];
+    int route_length = 0;
+    for (int i = route_count - 1; i >= 0; --i)
+        memcpy(route[route_length++], nodes[reverse[i]].angle, sizeof(route[0]));
+    memcpy(route[route_length++], goal, sizeof(route[0]));
+
+    /* Shortcut the RRT chain so animation remains smooth and the stored path
+     * stays small. Every shortcut is checked against the same collision model. */
+    float current[JOINT_COUNT];
+    memcpy(current, start, sizeof(current));
+    int stored = 0, cursor = 0;
+    while (cursor < route_length && stored < MACHINE_IK_PATH_MAX) {
+        int furthest = route_length - 1;
+        bool valid_segment = false;
+        while (furthest > cursor) {
+            valid_segment = ik_segment_valid(m, current, route[furthest]);
+            if (valid_segment)
+                break;
+            --furthest;
+        }
+        if (!valid_segment)
+            valid_segment = ik_segment_valid(m, current, route[furthest]);
+        if (!valid_segment)
+            return false;
+        memcpy(path[stored++], route[furthest], sizeof(path[0]));
+        memcpy(current, route[furthest], sizeof(current));
+        cursor = furthest + 1;
+    }
+    if (cursor < route_length || stored == 0)
+        return false;
+    *path_count = stored;
+    return true;
+}
+
+static float solve_ik_seed(PrizeMachine *m, Vec3 target,
+                           const float seed[JOINT_COUNT], float solution[JOINT_COUNT]) {
     enum { MAX_ITERATIONS = 120 };
     const float tolerance = .05f;
     const float max_step_degrees = 18.0f;
     const float radians_to_degrees = 57.29577951308232f;
-    if (!m || m->round != ROUND_PLAYING || !isfinite(target.x) || !isfinite(target.y) ||
-        !isfinite(target.z))
-        return false;
-
-    AABB workspace = MACHINE_CONFIG.workspace;
-    if (target.x < workspace.min.x || target.x > workspace.max.x || target.y < workspace.min.y ||
-        target.y > workspace.max.y || target.z < workspace.min.z || target.z > workspace.max.z) {
-        message(m, "Alvo fora da area de trabalho.");
-        return false;
-    }
-
-    float original[JOINT_COUNT], best[JOINT_COUNT];
-    memcpy(original, m->arm.angle, sizeof(original));
-    memcpy(best, original, sizeof(best));
+    memcpy(m->arm.angle, seed, sizeof(m->arm.angle));
+    update_world(m);
+    memcpy(solution, seed, sizeof(m->arm.angle));
     float best_error = v3_length(v3_sub(machine_grip_position(m), target));
 
-    /* Cyclic coordinate descent: rotate one joint at a time so the current
-     * grip-to-joint vector points toward the target, then visit its parent. */
+    /* CCD changes one degree of freedom at a time. Multiple legal starting
+     * poses are tried below because joint limits create distinct IK branches. */
     for (int iteration = 0; iteration < MAX_ITERATIONS && best_error > tolerance; ++iteration) {
         for (int joint = JOINT_COUNT - 1; joint >= 0; --joint) {
             update_world(m);
@@ -293,25 +456,141 @@ bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
         float candidate_error = v3_length(v3_sub(machine_grip_position(m), target));
         if (candidate_error < best_error) {
             best_error = candidate_error;
-            memcpy(best, m->arm.angle, sizeof(best));
+            memcpy(solution, m->arm.angle, sizeof(m->arm.angle));
+        }
+    }
+    return best_error;
+}
+
+bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
+    const float tolerance = .05f;
+    if (!m || m->round != ROUND_PLAYING || !isfinite(target.x) || !isfinite(target.y) ||
+        !isfinite(target.z))
+        return false;
+
+    AABB workspace = MACHINE_CONFIG.workspace;
+    if (target.x < workspace.min.x || target.x > workspace.max.x || target.y < workspace.min.y ||
+        target.y > workspace.max.y || target.z < workspace.min.z || target.z > workspace.max.z) {
+        message(m, "Alvo fora da area de trabalho.");
+        return false;
+    }
+
+    float original[JOINT_COUNT], best[JOINT_COUNT];
+    memcpy(original, m->arm.angle, sizeof(original));
+    memcpy(best, original, sizeof(best));
+    float best_error = v3_length(v3_sub(machine_grip_position(m), target));
+    float candidates[16][JOINT_COUNT], candidate_errors[16];
+    float path[MACHINE_IK_PATH_MAX][JOINT_COUNT], selected[JOINT_COUNT];
+    int candidate_count = 0;
+    int path_count = 0;
+    float selected_error = best_error;
+    bool planned = false;
+    static const float restart_poses[][JOINT_COUNT] = {
+        {0, -25, -85, -70}, {0, -45, -85, -50}, {55, -20, -100, -30},
+        {-55, -20, -100, -30}, {0, -70, -100, -80}, {0, 0, -45, 0},
+        {0, -80, -130, -100}, {45, -45, -85, -50}, {-45, -45, -85, -50},
+        {60, 20, -20, 60}, {-70, -20, -50, 45}, {15, -60, -120, 25},
+    };
+
+    for (int attempt = -1; attempt < (int)(sizeof(restart_poses) / sizeof(restart_poses[0]));
+         ++attempt) {
+        float seed[JOINT_COUNT], solution[JOINT_COUNT];
+        if (attempt < 0) {
+            memcpy(seed, original, sizeof(seed));
+        } else {
+            for (int joint = 0; joint < JOINT_COUNT; ++joint) {
+                const JointConfig *limits = &MACHINE_CONFIG.joints[joint];
+                seed[joint] = cg_clamp(restart_poses[attempt][joint], limits->min, limits->max);
+            }
+        }
+        float candidate_error = solve_ik_seed(m, target, seed, solution);
+        if (candidate_error < best_error) {
+            best_error = candidate_error;
+            memcpy(best, solution, sizeof(best));
+        }
+        if (candidate_error > tolerance || !pose_valid_at(m, solution))
+            continue;
+        bool duplicate = false;
+        for (int existing = 0; existing < candidate_count; ++existing)
+            if (ik_joint_distance_squared(candidates[existing], solution) < 4.0f) {
+                duplicate = true;
+                if (candidate_error < candidate_errors[existing])
+                    candidate_errors[existing] = candidate_error;
+                break;
+            }
+        if (!duplicate && candidate_count < 16) {
+            memcpy(candidates[candidate_count], solution, sizeof(solution));
+            candidate_errors[candidate_count++] = candidate_error;
+        }
+        if (attempt < 0 && candidate_error <= tolerance && !duplicate) {
+            planned = plan_ik_path(m, original, solution, &path_count, path);
+            if (planned) {
+                memcpy(selected, solution, sizeof(selected));
+                selected_error = candidate_error;
+            }
         }
     }
 
-    /* The search is instantaneous; normal frame updates animate from the
-     * current pose toward its best bounded solution. */
+    /* Keep the nearest collision-free approximation as a fallback for targets
+     * outside the arm's true reach, if it can be approached safely. */
+    if (candidate_count == 0 && pose_valid_at(m, best)) {
+        memcpy(candidates[0], best, sizeof(best));
+        candidate_errors[0] = best_error;
+        candidate_count = 1;
+    }
+
+    bool attempted[16] = {false};
+    for (int attempt = 0; attempt < candidate_count && !planned; ++attempt) {
+        int nearest = -1;
+        float nearest_distance = FLT_MAX;
+        for (int candidate = 0; candidate < candidate_count; ++candidate) {
+            if (attempted[candidate])
+                continue;
+            float distance = ik_joint_distance_squared(original, candidates[candidate]);
+            if (distance < nearest_distance) {
+                nearest = candidate;
+                nearest_distance = distance;
+            }
+        }
+        if (nearest < 0)
+            break;
+        attempted[nearest] = true;
+        planned = plan_ik_path(m, original, candidates[nearest], &path_count, path);
+        if (planned) {
+            memcpy(selected, candidates[nearest], sizeof(selected));
+            selected_error = candidate_errors[nearest];
+        }
+    }
+
+    /* The search is instantaneous; normal frame updates animate along a
+     * collision-checked joint-space route to the best bounded solution. */
     memcpy(m->arm.angle, original, sizeof(original));
-    memcpy(m->arm.target, best, sizeof(best));
     update_world(m);
+    if (!planned) {
+        m->ik_path_count = m->ik_path_index = 0;
+        memcpy(m->arm.target, original, sizeof(original));
+        m->ik_target = target;
+        m->ik_error = v3_length(v3_sub(machine_grip_position(m), target));
+        m->ik_target_active = true;
+        if (error)
+            *error = m->ik_error;
+        message(m, "IK: nao encontrei uma rota livre de colisao.");
+        return false;
+    }
+    memcpy(m->ik_path, path, (size_t)path_count * sizeof(path[0]));
+    m->ik_path_count = path_count;
+    m->ik_path_index = 1;
+    memcpy(m->arm.target, m->ik_path[0], sizeof(m->arm.target));
     m->ik_target = target;
     m->ik_error = v3_length(v3_sub(machine_grip_position(m), target));
     m->ik_target_active = true;
     if (error)
-        *error = best_error;
-    if (best_error <= tolerance)
+        *error = selected_error;
+    if (selected_error <= tolerance)
         message(m, "IK: alvo alcancavel; movimento em andamento.");
     else
         message(m, "IK: aproximando o maximo; ajuste as juntas se necessario.");
-    return best_error <= tolerance;
+    return selected_error <= tolerance;
 }
 AABB machine_delivery_region(const PrizeMachine *m) {
     AABB region = scene_bounds(m->solids[m->tray_solid].node);
@@ -388,6 +667,10 @@ bool machine_pose_valid(const PrizeMachine *m) {
         for (int p = 0; p < PRIZE_COUNT; ++p) {
             if (m->prizes[p].state == PRIZE_HELD)
                 continue;
+            /* The palm is the top surface of the gripper and may touch the
+             * prize being centered between the fingers. */
+            if (part == 2 && p == candidate)
+                continue;
             /* In the finger/prize pair only, refine the world AABB in the finger's
              * local frame. This avoids a yaw-expanded box closing the empty gap. */
             if (part == 3 || part == 4) {
@@ -422,6 +705,11 @@ bool machine_pose_valid(const PrizeMachine *m) {
 void machine_target_joint(PrizeMachine *m, int joint, float degrees) {
     if (m->round != ROUND_PLAYING || joint < 0 || joint >= JOINT_COUNT || !isfinite(degrees))
         return;
+    if (m->ik_path_count > 0) {
+        m->ik_path_count = m->ik_path_index = 0;
+        memcpy(m->arm.target, m->arm.angle, sizeof(m->arm.target));
+    }
+    m->ik_target_active = false;
     const JointConfig *c = &MACHINE_CONFIG.joints[joint];
     m->arm.target[joint] = cg_clamp(degrees, c->min, c->max);
     if (degrees < c->min || degrees > c->max)
@@ -429,7 +717,9 @@ void machine_target_joint(PrizeMachine *m, int joint, float degrees) {
 }
 void machine_nudge_joint(PrizeMachine *m, int joint, float degrees) {
     if (joint >= 0 && joint < JOINT_COUNT)
-        machine_target_joint(m, joint, m->arm.target[joint] + degrees);
+        machine_target_joint(m, joint,
+                             (m->ik_path_count > 0 ? m->arm.angle[joint] : m->arm.target[joint]) +
+                                 degrees);
 }
 void machine_open(PrizeMachine *m) {
     if (m->round != ROUND_PLAYING)
@@ -465,7 +755,62 @@ static void blocked(PrizeMachine *m) {
     ++m->blocked_moves;
     message(m, "Movimento bloqueado.");
 }
+static bool ik_waypoint_reached(const PrizeMachine *m) {
+    for (int joint = 0; joint < JOINT_COUNT; ++joint)
+        if (fabsf(m->arm.angle[joint] - m->arm.target[joint]) > .0001f)
+            return false;
+    return true;
+}
+static void advance_ik_waypoint(PrizeMachine *m) {
+    while (m->ik_path_count > 0 && ik_waypoint_reached(m)) {
+        if (m->ik_path_index >= m->ik_path_count) {
+            m->ik_path_count = m->ik_path_index = 0;
+            return;
+        }
+        memcpy(m->arm.target, m->ik_path[m->ik_path_index], sizeof(m->arm.target));
+        ++m->ik_path_index;
+    }
+}
+static void move_ik_joints(PrizeMachine *m, float dt) {
+    advance_ik_waypoint(m);
+    if (m->ik_path_count == 0)
+        return;
+
+    float old[JOINT_COUNT], duration = 0;
+    memcpy(old, m->arm.angle, sizeof(old));
+    for (int joint = 0; joint < JOINT_COUNT; ++joint) {
+        float distance = fabsf(m->arm.target[joint] - old[joint]);
+        float speed = MACHINE_CONFIG.joints[joint].speed;
+        if (speed > 0)
+            duration = fmaxf(duration, distance / speed);
+    }
+    if (duration <= 1e-7f) {
+        advance_ik_waypoint(m);
+        return;
+    }
+    float fraction = fminf(1.0f, dt / duration);
+    for (int joint = 0; joint < JOINT_COUNT; ++joint)
+        m->arm.angle[joint] = old[joint] + (m->arm.target[joint] - old[joint]) * fraction;
+    update_world(m);
+    if (!machine_pose_valid(m)) {
+        memcpy(m->arm.angle, old, sizeof(old));
+        memcpy(m->arm.target, old, sizeof(old));
+        update_world(m);
+        m->ik_path_count = m->ik_path_index = 0;
+        blocked(m);
+        return;
+    }
+    if (fraction >= 1.0f) {
+        memcpy(m->arm.angle, m->arm.target, sizeof(m->arm.angle));
+        update_world(m);
+        advance_ik_waypoint(m);
+    }
+}
 static void move_joints(PrizeMachine *m, float dt) {
+    if (m->ik_path_count > 0) {
+        move_ik_joints(m, dt);
+        return;
+    }
     for (int i = 0; i < JOINT_COUNT; ++i) {
         float old = m->arm.angle[i];
         m->arm.angle[i] = approach(old, m->arm.target[i], MACHINE_CONFIG.joints[i].speed * dt);
@@ -739,6 +1084,8 @@ int machine_pick(PrizeMachine *m, Ray ray) {
     return selected;
 }
 bool machine_at_target(const PrizeMachine *m) {
+    if (m->ik_path_count > 0)
+        return false;
     for (int i = 0; i < JOINT_COUNT; ++i)
         if (fabsf(m->arm.angle[i] - m->arm.target[i]) > .001f)
             return false;

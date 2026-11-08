@@ -11,9 +11,10 @@ solta cada um na bandeja verde. Um alien só conta quando está solto, parado
 diretamente sobre a bandeja e inteiro dentro dela. Com **3/3**, a coleção está
 completa.
 
-Você define o ângulo de cada junta (cinemática direta). Clicar num alien só o
-destaca; o braço não vai até ele sozinho. A captura segue uma regra geométrica
-fixa: não há sorte envolvida, e o alien não escapa enquanto está preso.
+No controle FK, você define o ângulo de cada junta. No modo IK, a garra segue o
+cursor e clicar num alien disponível inicia a aproximação e a captura automática.
+A captura segue regras geométricas: o braço usa uma rota sem colisões e só fecha
+quando o alien está alinhado e cabe entre os dedos.
 
 ### Primeira partida
 
@@ -143,7 +144,9 @@ simulador estão na próxima seção.
 | --- | --- |
 | Selecionar um prêmio disponível | Clique esquerdo diretamente no alien |
 | Alternar controle FK / IK | `I` |
-| Definir alvo IK | Em IK, clique em um alien ou em espaço livre sobre o piso |
+| Guiar a garra em IK | Pressione `I` e mova o cursor sobre a cena |
+| Capturar automaticamente em IK | Clique esquerdo num alien disponível |
+| Definir alvo de movimento livre | Em IK, clique em espaço livre sobre o piso |
 | Selecionar base / ombro / cotovelo / punho | `1` / `2` / `3` / `4` |
 | Selecionar junta pelo painel | Clique na linha da junta |
 | Diminuir / aumentar o ângulo continuamente | Segure `←` / `→` |
@@ -169,10 +172,11 @@ simulador estão na próxima seção.
 As letras funcionam em maiúsculas e minúsculas. Nos incrementos de 5° e 1°, solte
 a tecla a cada passo: segurar `+` não repete. Para movimento contínuo, use as
 setas; soltá-las interrompe o movimento. Câmera e seleção usam botões do mouse
-diferentes para não se misturarem. Em IK, clicar num alien disponível mira seu
-centro; clicar no espaço livre mira o plano do piso na altura do centro dos
-prêmios. O modo IK não fecha a garra automaticamente. Com a ajuda aberta, a cena
-não recebe cliques.
+diferentes para não se misturarem. Em IK, mover o cursor guia a garra pelo plano
+ao nível do centro dos prêmios; clicar no piso fixa um alvo nesse plano. Clicar
+num alien disponível inicia a captura automática: a garra abre, segue uma rota
+validada contra colisões, confirma o alinhamento e só então fecha. Se não houver
+alinhamento seguro, ela não fecha. Com a ajuda aberta, a cena não recebe cliques.
 
 No modo livre, o botão direito olha ao redor a partir da posição atual, e a roda
 avança ou recua na direção da visão. A roda pressionada desloca a câmera nos dois
@@ -290,14 +294,17 @@ isso não indica problema na instalação.
 
 ## 7. Limitações e testes
 
-É uma simulação didática de FK com IK de posição por CCD. A IK não resolve a
-orientação da garra nem planeja trajetórias sem obstáculos; a validação de
-colisões pode bloquear o braço antes do alvo. Também não há autocolisão entre os
-segmentos do braço, deformação de pelúcia, som, persistência entre execuções nem
-salvamento de partida. A câmera pode mostrar o verso das peças, e não há vidro
-transparente nem sombras projetadas. As colisões usam caixas conservadoras e não
-giram os aliens. Consulte o [relatório técnico](RELATORIO_TECNICO_IK.md) para
-estudar o CCD e experimentar os parâmetros.
+É uma simulação didática de FK com IK de posição por CCD e planejamento de rota
+em espaço de juntas. A IK não resolve a orientação da garra; alvos livres não
+fecham os dedos, enquanto o clique em alien inicia o fechamento após validar a
+pose de captura. A busca de rotas tem orçamento limitado e usa caixas AABB
+conservadoras; alguns alvos podem ser recusados ou aproximados sem atingir a
+tolerância. Também não há autocolisão entre os segmentos do braço, deformação de
+pelúcia, som, persistência entre execuções nem salvamento de partida. A câmera
+pode mostrar o verso das peças, e não há vidro transparente nem sombras
+projetadas. As colisões usam caixas conservadoras e não giram os aliens. Consulte
+o [relatório técnico](RELATORIO_TECNICO_IK.md) para estudar o CCD, o planejador e
+experimentar os parâmetros.
 
 Rode os testes de lógica e memória com:
 

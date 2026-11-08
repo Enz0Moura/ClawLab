@@ -183,7 +183,7 @@ static void panel(const UserInterface *ui, const PrizeMachine *m) {
                     m->prizes[i].state == PRIZE_DELIVERED ? ACCENT : MUTED, false);
     }
     render_rect(left, 262, 272, 1, (Color){.15f, .21f, .27f});
-    render_text(left, 287, ui->ik_mode ? "IK ATIVO   /   CLIQUE NO ALVO"
+    render_text(left, 287, ui->ik_mode ? "IK ATIVO   /   CURSOR + CAPTURA"
                                        : "JUNTAS   /   CONTROLE FK 1 a 4",
                 ui->ik_mode ? ACCENT : MUTED, false);
     for (int i = 0; i < JOINT_COUNT; ++i) {
@@ -225,8 +225,8 @@ static void panel(const UserInterface *ui, const PrizeMachine *m) {
     button(left, 610, 130, "C  FECHAR", true);
     button(left + 140, 610, 130, "O  ABRIR", false);
     render_text(left, 668, "Setas: junta  |  +/-: 5 graus  |  [ ]: 1 grau", MUTED, false);
-    render_text(left, 687, ui->ik_mode ? "I: sair do IK  |  clique: alvo"
-                                       : "I: ativar IK por clique",
+    render_text(left, 687, ui->ik_mode ? "I: cursor  |  clique alien: pegar"
+                                       : "I: mover garra com cursor",
                 ui->ik_mode ? ACCENT : MUTED, false);
     glPopMatrix();
     button(left, ui->height - 105, 130, "H  AJUDA", false);
@@ -243,8 +243,9 @@ static void help(const UserInterface *ui) {
                            "   +/- muda o alvo em 5 graus; [ e ] em 1 grau.",
                            "4. Aproxime a garra aberta. C fecha; O abre e solta.",
                            "5. Transporte e solte na bandeja verde.",
-                           "I: alternar FK/IK. No IK, clique em premio ou piso.",
-                           "IK usa CCD; juntas respeitam seus limites angulares.",
+                           "I: cursor guia a garra; clique no alien para pegar.",
+                           "No IK, clique no piso para mover sem fechar a garra.",
+                           "A captura só fecha alinhada e com rota sem colisão.",
                            "",
                            "Camera: direito gira; roda pressionada desloca.",
                            "F: camera livre (direito olha; roda avanca/recua).",
@@ -401,10 +402,10 @@ void ui_draw(const UserInterface *ui, const PrizeMachine *m) {
         status = "Captura possivel. Pressione C para fechar.";
     else if (ui->ik_mode && m->ik_target_active) {
         snprintf(ik_status, sizeof(ik_status),
-                 "IK: erro %.3f unidades; clique para escolher outro alvo.", (double)m->ik_error);
+                 "IK: erro %.3f; mova cursor ou clique em alien.", (double)m->ik_error);
         status = ik_status;
     } else if (ui->ik_mode)
-        status = "IK ativo: clique em um premio ou no piso para definir o alvo.";
+        status = "IK ativo: mova o cursor; clique no alien para captura automatica.";
     else
         status = "Clique em um premio. Use 1-4 e as setas para controlar o braco.";
     render_text(26, (float)ui->height - 40, status, TEXT, true);

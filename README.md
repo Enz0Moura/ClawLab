@@ -40,8 +40,8 @@ make clean     # remove build/
 `build/libcg.a`. Escolha um modo no menu com o mouse ou **1–4**.
 Para jogar: clique num prêmio; escolha a junta com **1–4**;
 use **←/→** ou **+/−**; **C** fecha, **O** abre, **H** mostra a ajuda.
-Pressione **I** para alternar para IK por clique; clique em um alien ou no piso
-para posicionar a garra.
+Pressione **I** para a garra seguir o cursor; clique em um alien para iniciar a
+captura automática. Clique no piso para fixar um alvo sem fechar a garra.
 Botão direito e roda controlam a câmera. **R** reinicia; **D** mostra a depuração.
 Arraste com a roda pressionada para deslocar a visão. **F** alterna a câmera
 livre: botão direito olha ao redor e a roda avança ou recua. **Home** restaura a câmera.
