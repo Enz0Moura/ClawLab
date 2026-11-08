@@ -303,7 +303,7 @@ bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
     memcpy(m->arm.target, best, sizeof(best));
     update_world(m);
     m->ik_target = target;
-    m->ik_error = best_error;
+    m->ik_error = v3_length(v3_sub(machine_grip_position(m), target));
     m->ik_target_active = true;
     if (error)
         *error = best_error;

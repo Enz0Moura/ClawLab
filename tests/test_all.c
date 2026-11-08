@@ -286,6 +286,42 @@ static void test_limits_collision_time(void) {
     machine_destroy(m);
     machine_destroy(n);
 }
+static void test_inverse_kinematics(void) {
+    PrizeMachine *m = machine_create_seeded(MODE_SANDBOX, 42);
+    PrizeMachine *reference = machine_create_seeded(MODE_SANDBOX, 42);
+    CHECK(m && reference);
+
+    /* A nearby FK pose gives a deterministic, reachable position target. */
+    target(reference, 0, 2);
+    Vec3 goal = machine_grip_position(reference);
+    Vec3 initial = machine_grip_position(m);
+    float solution_error = INFINITY;
+    CHECK(machine_solve_ik(m, goal, &solution_error));
+    CHECK(solution_error <= .05f);
+    CHECK(m->ik_target_active);
+    check_vec(m->ik_target, goal);
+    CHECK(v3_length(v3_sub(machine_grip_position(m), initial)) < .001f);
+    CHECK(m->ik_error > solution_error);
+    for (int joint = 0; joint < JOINT_COUNT; ++joint) {
+        CHECK(m->arm.target[joint] >= MACHINE_CONFIG.joints[joint].min);
+        CHECK(m->arm.target[joint] <= MACHINE_CONFIG.joints[joint].max);
+    }
+
+    advance(m, .25f);
+    CHECK(m->ik_error < .05f);
+    CHECK(v3_length(v3_sub(machine_grip_position(m), goal)) <= .05f);
+
+    /* An in-envelope but unreachable point returns the best bounded pose. */
+    CHECK(!machine_solve_ik(m, vec3(3.6f, 4.3f, 3.3f), &solution_error));
+    CHECK(solution_error > .05f);
+    for (int joint = 0; joint < JOINT_COUNT; ++joint) {
+        CHECK(m->arm.target[joint] >= MACHINE_CONFIG.joints[joint].min);
+        CHECK(m->arm.target[joint] <= MACHINE_CONFIG.joints[joint].max);
+    }
+
+    machine_destroy(reference);
+    machine_destroy(m);
+}
 static void test_occlusion_and_cargo(void) {
     PrizeMachine *m = machine_create();
     CHECK(m);
@@ -627,13 +663,14 @@ int main(void) {
     test_mesh_contract();
     test_full_game();
     test_limits_collision_time();
+    test_inverse_kinematics();
     test_occlusion_and_cargo();
     test_difficulty_trays();
     test_modes_and_clock();
     test_bouncing_prizes();
     test_release_velocity();
     test_random_spawns();
-    printf("PASS: %d checks (math, camera, ownership, FK, picking, collisions, difficulty trays, "
+    printf("PASS: %d checks (math, camera, ownership, FK/IK, picking, collisions, difficulty trays, "
            "randomized spawns, 96 seeded rounds, all collection orders, reset)\n",
            checks);
     return EXIT_SUCCESS;
