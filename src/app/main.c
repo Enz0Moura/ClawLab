@@ -30,6 +30,7 @@ static void choose_mode(GameMode mode) {
         return;
     }
     ui.menu = ui.help = ui.paused = false;
+    ui.ik_mode = false;
     reset_camera();
     ui.active_joint = held_direction = 0;
     last_time = glutGet(GLUT_ELAPSED_TIME);
@@ -81,6 +82,7 @@ static void reset(void) {
     }
     reset_camera();
     ui.paused = ui.help = false;
+    ui.ik_mode = false;
     ui.active_joint = 0;
     held_direction = 0;
     last_time = glutGet(GLUT_ELAPSED_TIME);
@@ -150,6 +152,10 @@ static void key(unsigned char k, int x, int y) {
         ui.help = !ui.help;
         held_direction = 0;
         drag_button = -1;
+        break;
+    case 'i':
+        ui.ik_mode = !ui.ik_mode;
+        machine->message_time = 0;
         break;
     case 'd':
         ui.debug = !ui.debug;
@@ -235,8 +241,30 @@ static void mouse(int button, int state, int x, int y) {
     } else if (!ui.help && y >= UI_TOP && y < ui.height - UI_BOTTOM) {
         Ray ray;
         if (camera_ray(&ui.camera, (float)x, (float)(y - UI_TOP), ui_view_width(&ui),
-                       ui_view_height(&ui), &ray))
-            machine_pick(machine, ray);
+                       ui_view_height(&ui), &ray)) {
+            if (!ui.ik_mode) {
+                machine_pick(machine, ray);
+            } else {
+                int prize = machine_pick(machine, ray);
+                Vec3 target;
+                bool has_target = false;
+                if (prize >= 0) {
+                    target = mat4_point(machine->prizes[prize].node->world, vec3(0, 0, 0));
+                    has_target = true;
+                } else if (fabsf(ray.direction.y) > 1e-6f) {
+                    /* Empty-space clicks define a target over the floor plane,
+                     * at the center height of a floor-supported prize. */
+                    float distance = (MACHINE_CONFIG.prize_size * .5f - ray.origin.y) /
+                                     ray.direction.y;
+                    if (distance > 0) {
+                        target = v3_add(ray.origin, v3_scale(ray.direction, distance));
+                        has_target = true;
+                    }
+                }
+                if (has_target)
+                    machine_solve_ik(machine, target, NULL);
+            }
+        }
     }
 }
 static void motion(int x, int y) {

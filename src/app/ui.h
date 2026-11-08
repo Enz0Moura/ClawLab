@@ -7,7 +7,7 @@
 enum { UI_PANEL_WIDTH = 316, UI_TOP = 76, UI_BOTTOM = 70 };
 typedef struct {
     int width, height, active_joint;
-    bool help, debug, free_camera, menu, paused;
+    bool help, debug, free_camera, menu, paused, ik_mode;
     Camera camera;
 } UserInterface;
 typedef struct {

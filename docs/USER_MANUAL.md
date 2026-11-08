@@ -11,9 +11,11 @@ Amarelo (Yellow) — and release each one onto the green tray. An alien only cou
 when it is released, at rest directly on the tray and entirely inside it. At
 **3/3**, the collection is complete.
 
-You set each joint angle yourself (forward kinematics). Clicking an alien only
-highlights it; the arm does not move toward it on its own. Capture follows a fixed
-geometric rule: there is no luck involved, and an alien cannot slip out while held.
+In forward kinematics (FK), you set each joint angle yourself. Press `I` to switch
+to position inverse kinematics (IK), then click an alien or a point on the floor
+to move the gripper toward that target. In FK, clicking an alien only highlights
+it. Capture follows a fixed geometric rule: there is no luck involved, and an
+alien cannot slip out while held.
 
 The simulator's interface is in Portuguese. This guide keeps the on-screen labels,
 prize names and key bindings as they appear, so you can match them in the app.
@@ -146,6 +148,8 @@ exits. The simulator's controls are in the next section.
 | Action | Control |
 | --- | --- |
 | Select an available prize | Left-click directly on the alien |
+| Toggle FK / IK control | `I` |
+| Set an IK target | In IK mode, click an alien or empty space over the floor |
 | Select base / shoulder / elbow / wrist | `1` / `2` / `3` / `4` |
 | Select a joint in the panel | Click the joint's row |
 | Decrease / increase the angle continuously | Hold `←` / `→` |
@@ -170,9 +174,10 @@ exits. The simulator's controls are in the next section.
 
 Letter keys work in both uppercase and lowercase. For the 5° and 1° increments,
 release the key after each step: holding `+` does not repeat. For continuous
-movement, use the arrow keys; releasing them stops the movement. Camera and
-selection use different mouse buttons so they do not get mixed up, and while help
-is open you cannot select objects behind its panel.
+movement, use the arrow keys; releasing them stops the movement. In IK mode,
+clicking an available alien targets its center; clicking empty space targets the
+floor plane at prize-center height. IK does not close the claw automatically.
+While help is open, scene clicks are ignored.
 
 In free mode, the right button looks around from the current position, and the
 wheel moves forward or backward along the viewing direction. Middle-button
@@ -292,11 +297,13 @@ mean the installation is broken.
 
 ## 7. Limitations and tests
 
-This is an educational forward kinematics simulation. It has no IK, realistic
-finger physics, self-collision between arm segments, plush deformation, sound,
-persistence between runs or saved games. The camera can show the back of parts,
-and there is no transparent glass or cast shadows. Collisions use conservative
-boxes and do not rotate the aliens.
+This is an educational FK simulation with position IK using CCD. IK does not solve
+gripper orientation or plan collision-free paths; collision checks can stop the
+arm before its target. There is no self-collision between arm segments, realistic
+finger physics, plush deformation, sound, persistence between runs or saved games.
+The camera can show the back of parts, and there is no transparent glass or cast
+shadows. Collisions use conservative boxes and do not rotate the aliens. See the
+[technical IK report](RELATORIO_TECNICO_IK.md) for the algorithm and study ideas.
 
 Run the logic and memory tests with:
 

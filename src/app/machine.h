@@ -33,6 +33,9 @@ typedef struct {
     unsigned blocked_moves;
     char message[96];
     float message_time;
+    Vec3 ik_target;
+    float ik_error;
+    bool ik_target_active;
     GameMode mode;
     RoundState round;
     float time_remaining;
@@ -55,6 +58,9 @@ void machine_close(PrizeMachine *machine);
 int machine_pick(PrizeMachine *machine, Ray ray); /* Sets selected, returns ID or -1. */
 int machine_capture_candidate(const PrizeMachine *machine, float *required_gap);
 Vec3 machine_grip_position(const PrizeMachine *machine);
+/* CCD position IK. A false result can still leave the joints targeting the
+ * closest pose found; error reports the remaining world-space distance. */
+bool machine_solve_ik(PrizeMachine *machine, Vec3 target, float *error);
 AABB machine_delivery_region(const PrizeMachine *machine);
 bool machine_pose_valid(const PrizeMachine *machine); /* Current scene matrices must be updated. */
 bool machine_at_target(const PrizeMachine *machine);

@@ -11,7 +11,8 @@ time limit, bounce strength, variation in the aliens' starting positions and tra
 The visuals are inspired by the **Pizza Planet claw machine from Toy Story**.
 
 Developed for **scenario 3 — Robotic Arm Simulator**, CG 2026/2,
-CEFET/RJ, UnED Petrópolis.
+CEFET/RJ, UnED Petrópolis. It provides forward kinematics and position IK using
+cyclic coordinate descent (CCD); press **I** and click a target to use IK.
 
 The architecture follows the `Geometry`, embedded base struct, methods with
 `self` and factory patterns from
@@ -39,6 +40,8 @@ make clean     # remove build/
 `build/libcg.a`. Choose a mode in the menu with the mouse or **1–4**.
 To play: click a prize; select a joint with **1–4**;
 use **←/→** or **+/−**; **C** closes, **O** opens, **H** shows help.
+Press **I** to toggle mouse driven IK; click an alien or the floor to set the
+gripper target.
 The right mouse button and wheel control the camera. **R** resets; **D** toggles
 debug views. The simulator's interface is in Portuguese; the English manual
 explains its labels while preserving the actual names and key bindings.

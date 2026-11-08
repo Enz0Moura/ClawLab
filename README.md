@@ -11,7 +11,8 @@ dos quiques, a variação das posições iniciais dos aliens e o tamanho da band
 O visual é inspirado na máquina do **Pizza Planet, de Toy Story**.
 
 Projeto para o **cenário 3 — Simulador de Braço Robótico**, CG 2026/2,
-CEFET/RJ, UnED Petrópolis. IK não foi implementada.
+CEFET/RJ, UnED Petrópolis. Além do controle FK, inclui IK de posição por CCD;
+pressione **I** e clique em um alvo.
 
 A arquitetura segue os padrões de `Geometry`, base incorporada, métodos com
 `self` e fábricas de
@@ -39,6 +40,8 @@ make clean     # remove build/
 `build/libcg.a`. Escolha um modo no menu com o mouse ou **1–4**.
 Para jogar: clique num prêmio; escolha a junta com **1–4**;
 use **←/→** ou **+/−**; **C** fecha, **O** abre, **H** mostra a ajuda.
+Pressione **I** para alternar para IK por clique; clique em um alien ou no piso
+para posicionar a garra.
 Botão direito e roda controlam a câmera. **R** reinicia; **D** mostra a depuração.
 Arraste com a roda pressionada para deslocar a visão. **F** alterna a câmera
 livre: botão direito olha ao redor e a roda avança ou recua. **Home** restaura a câmera.
@@ -88,5 +91,7 @@ Ele traz um passo a passo da primeira partida, todos os controles e as regras
 de captura e entrega.
 
 Validado em CachyOS Linux, freeglut 3.8.0 e OpenGL de compatibilidade 4.6/NVIDIA.
-Usa AABBs conservadoras, gravidade, colisões com quique e atrito simplificado numa
-região limitada da cabine. Não implementa autocolisão do braço nem rotação física dos prêmios.
+Usa CCD iterativo com limites de juntas, AABBs conservadoras, gravidade, colisões
+com quique e atrito simplificado numa região limitada da cabine. Não implementa
+autocolisão do braço nem rotação física dos prêmios. Veja o
+[relatório técnico de IK](docs/RELATORIO_TECNICO_IK.md) para detalhes do algoritmo.

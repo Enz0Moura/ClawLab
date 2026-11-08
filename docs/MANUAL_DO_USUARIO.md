@@ -142,6 +142,8 @@ simulador estão na próxima seção.
 | Ação | Comando |
 | --- | --- |
 | Selecionar um prêmio disponível | Clique esquerdo diretamente no alien |
+| Alternar controle FK / IK | `I` |
+| Definir alvo IK | Em IK, clique em um alien ou em espaço livre sobre o piso |
 | Selecionar base / ombro / cotovelo / punho | `1` / `2` / `3` / `4` |
 | Selecionar junta pelo painel | Clique na linha da junta |
 | Diminuir / aumentar o ângulo continuamente | Segure `←` / `→` |
@@ -167,8 +169,10 @@ simulador estão na próxima seção.
 As letras funcionam em maiúsculas e minúsculas. Nos incrementos de 5° e 1°, solte
 a tecla a cada passo: segurar `+` não repete. Para movimento contínuo, use as
 setas; soltá-las interrompe o movimento. Câmera e seleção usam botões do mouse
-diferentes para não se misturarem, e, com a ajuda aberta, não dá para selecionar
-objetos atrás do painel.
+diferentes para não se misturarem. Em IK, clicar num alien disponível mira seu
+centro; clicar no espaço livre mira o plano do piso na altura do centro dos
+prêmios. O modo IK não fecha a garra automaticamente. Com a ajuda aberta, a cena
+não recebe cliques.
 
 No modo livre, o botão direito olha ao redor a partir da posição atual, e a roda
 avança ou recua na direção da visão. A roda pressionada desloca a câmera nos dois
@@ -286,11 +290,14 @@ isso não indica problema na instalação.
 
 ## 7. Limitações e testes
 
-É uma simulação didática de cinemática direta. Não inclui IK, física realista dos
-dedos, autocolisão entre os segmentos do braço, deformação de pelúcia, som,
-persistência entre execuções nem salvamento de partida. A câmera pode mostrar o
-verso das peças, e não há vidro transparente nem sombras projetadas. As colisões
-usam caixas conservadoras e não giram os aliens.
+É uma simulação didática de FK com IK de posição por CCD. A IK não resolve a
+orientação da garra nem planeja trajetórias sem obstáculos; a validação de
+colisões pode bloquear o braço antes do alvo. Também não há autocolisão entre os
+segmentos do braço, deformação de pelúcia, som, persistência entre execuções nem
+salvamento de partida. A câmera pode mostrar o verso das peças, e não há vidro
+transparente nem sombras projetadas. As colisões usam caixas conservadoras e não
+giram os aliens. Consulte o [relatório técnico](RELATORIO_TECNICO_IK.md) para
+estudar o CCD e experimentar os parâmetros.
 
 Rode os testes de lógica e memória com:
 

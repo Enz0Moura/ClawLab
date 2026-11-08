@@ -101,6 +101,15 @@ static void draw_world(const UserInterface *ui, const PrizeMachine *m) {
         render_aabb(box, ACCENT);
         glLineWidth(1);
     }
+    if (ui->ik_mode && m->ik_target_active) {
+        Vec3 p = m->ik_target;
+        float r = .12f;
+        Color target_color = m->ik_error <= .05f ? ACCENT : GOLD;
+        render_line(vec3(p.x - r, p.y, p.z), vec3(p.x + r, p.y, p.z), target_color);
+        render_line(vec3(p.x, p.y - r, p.z), vec3(p.x, p.y + r, p.z), target_color);
+        render_line(vec3(p.x, p.y, p.z - r), vec3(p.x, p.y, p.z + r), target_color);
+        render_line(machine_grip_position(m), p, target_color);
+    }
     if (ui->debug) {
         render_aabb(MACHINE_CONFIG.workspace, (Color){.3f, .4f, .6f});
         for (int i = 0; i < m->solid_count; ++i)
@@ -174,7 +183,9 @@ static void panel(const UserInterface *ui, const PrizeMachine *m) {
                     m->prizes[i].state == PRIZE_DELIVERED ? ACCENT : MUTED, false);
     }
     render_rect(left, 262, 272, 1, (Color){.15f, .21f, .27f});
-    render_text(left, 287, "COMANDO DA GARRA   /   1 a 4", MUTED, false);
+    render_text(left, 287, ui->ik_mode ? "IK ATIVO   /   CLIQUE NO ALVO"
+                                       : "JUNTAS   /   CONTROLE FK 1 a 4",
+                ui->ik_mode ? ACCENT : MUTED, false);
     for (int i = 0; i < JOINT_COUNT; ++i) {
         float y = 300 + (float)i * 57;
         bool active = ui->active_joint == i;
@@ -203,20 +214,28 @@ static void panel(const UserInterface *ui, const PrizeMachine *m) {
                          : m->held >= 0                            ? "Garra ocupada"
                          : machine_capture_candidate(m, NULL) >= 0 ? "Captura possivel"
                                                                    : "Aproxime a garra aberta";
-    render_text(left, 593, status,
-                m->held >= 0 || machine_capture_candidate(m, NULL) >= 0 ? ACCENT : MUTED, false);
+    Color status_color =
+        m->held >= 0 || machine_capture_candidate(m, NULL) >= 0 ? ACCENT : MUTED;
+    if (ui->ik_mode && m->ik_target_active) {
+        snprintf(text, sizeof(text), "Erro IK: %.3f", (double)m->ik_error);
+        status = text;
+        status_color = m->ik_error <= .05f ? ACCENT : GOLD;
+    }
+    render_text(left, 593, status, status_color, false);
     button(left, 610, 130, "C  FECHAR", true);
     button(left + 140, 610, 130, "O  ABRIR", false);
-    render_text(left, 668, "Setas: mover  |  +/-: 5 graus", MUTED, false);
-    render_text(left, 687, "[ e ]: ajuste de 1 grau", MUTED, false);
+    render_text(left, 668, "Setas: junta  |  +/-: 5 graus  |  [ ]: 1 grau", MUTED, false);
+    render_text(left, 687, ui->ik_mode ? "I: sair do IK  |  clique: alvo"
+                                       : "I: ativar IK por clique",
+                ui->ik_mode ? ACCENT : MUTED, false);
     glPopMatrix();
     button(left, ui->height - 105, 130, "H  AJUDA", false);
     button(left + 140, ui->height - 105, 130, "R  REINICIAR", false);
 }
 static void help(const UserInterface *ui) {
     float x = 32, y = 166, w = (float)ui_view_width(ui) - 64;
-    render_rect(x, y, w, 386, (Color){.045f, .075f, .11f});
-    render_rect(x, y, 4, 386, ACCENT);
+    render_rect(x, y, w, 450, (Color){.045f, .075f, .11f});
+    render_rect(x, y, 4, 450, ACCENT);
     render_text(x + 24, y + 37, "COMO JOGAR", ACCENT, true);
     const char *lines[] = {"1. Clique em um premio para destaca-lo.",
                            "2. Escolha a junta com 1, 2, 3 ou 4.",
@@ -224,6 +243,8 @@ static void help(const UserInterface *ui) {
                            "   +/- muda o alvo em 5 graus; [ e ] em 1 grau.",
                            "4. Aproxime a garra aberta. C fecha; O abre e solta.",
                            "5. Transporte e solte na bandeja verde.",
+                           "I: alternar FK/IK. No IK, clique em premio ou piso.",
+                           "IK usa CCD; juntas respeitam seus limites angulares.",
                            "",
                            "Camera: direito gira; roda pressionada desloca.",
                            "F: camera livre (direito olha; roda avanca/recua).",
@@ -368,13 +389,24 @@ void ui_draw(const UserInterface *ui, const PrizeMachine *m) {
                 ui->debug ? (Color){1, .6f, .2f} : MUTED, false);
     panel(ui, m);
     render_rect(0, (float)ui->height - UI_BOTTOM, (float)ui_view_width(ui), UI_BOTTOM, INK);
-    const char *status = m->message_time > 0 ? m->message
-                         : m->delivered == PRIZE_COUNT
-                             ? "Colecao completa! Pressione R para jogar de novo."
-                         : m->held >= 0 ? "Leve o premio ate a bandeja verde e abra a garra."
-                         : machine_capture_candidate(m, NULL) >= 0
-                             ? "Captura possivel. Pressione C para fechar."
-                             : "Clique em um premio. Use 1-4 e as setas para controlar o braco.";
+    char ik_status[128];
+    const char *status;
+    if (m->message_time > 0)
+        status = m->message;
+    else if (m->delivered == PRIZE_COUNT)
+        status = "Colecao completa! Pressione R para jogar de novo.";
+    else if (m->held >= 0)
+        status = "Leve o premio ate a bandeja verde e abra a garra.";
+    else if (machine_capture_candidate(m, NULL) >= 0)
+        status = "Captura possivel. Pressione C para fechar.";
+    else if (ui->ik_mode && m->ik_target_active) {
+        snprintf(ik_status, sizeof(ik_status),
+                 "IK: erro %.3f unidades; clique para escolher outro alvo.", (double)m->ik_error);
+        status = ik_status;
+    } else if (ui->ik_mode)
+        status = "IK ativo: clique em um premio ou no piso para definir o alvo.";
+    else
+        status = "Clique em um premio. Use 1-4 e as setas para controlar o braco.";
     render_text(26, (float)ui->height - 40, status, TEXT, true);
     render_text(26, (float)ui->height - 17,
                 ui->free_camera ? "LIVRE / Direito: olhar / Meio: deslocar / Roda: mover / F: "

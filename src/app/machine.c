@@ -244,6 +244,75 @@ bool machine_start(PrizeMachine *m, GameMode mode) {
 Vec3 machine_grip_position(const PrizeMachine *m) {
     return mat4_point(m->arm.grip->world, vec3(0, 0, 0));
 }
+bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
+    enum { MAX_ITERATIONS = 120 };
+    const float tolerance = .05f;
+    const float max_step_degrees = 18.0f;
+    const float radians_to_degrees = 57.29577951308232f;
+    if (!m || m->round != ROUND_PLAYING || !isfinite(target.x) || !isfinite(target.y) ||
+        !isfinite(target.z))
+        return false;
+
+    AABB workspace = MACHINE_CONFIG.workspace;
+    if (target.x < workspace.min.x || target.x > workspace.max.x || target.y < workspace.min.y ||
+        target.y > workspace.max.y || target.z < workspace.min.z || target.z > workspace.max.z) {
+        message(m, "Alvo fora da area de trabalho.");
+        return false;
+    }
+
+    float original[JOINT_COUNT], best[JOINT_COUNT];
+    memcpy(original, m->arm.angle, sizeof(original));
+    memcpy(best, original, sizeof(best));
+    float best_error = v3_length(v3_sub(machine_grip_position(m), target));
+
+    /* Cyclic coordinate descent: rotate one joint at a time so the current
+     * grip-to-joint vector points toward the target, then visit its parent. */
+    for (int iteration = 0; iteration < MAX_ITERATIONS && best_error > tolerance; ++iteration) {
+        for (int joint = JOINT_COUNT - 1; joint >= 0; --joint) {
+            update_world(m);
+            SceneNode *node = m->arm.joint[joint];
+            Mat4 parent_world = node->parent ? node->parent->world : mat4_identity();
+            Vec3 local_axis = joint == 0 ? vec3(0, 1, 0) : vec3(0, 0, 1);
+            Vec3 axis = v3_normalize(mat4_vector(parent_world, local_axis));
+            Vec3 origin = mat4_point(node->world, vec3(0, 0, 0));
+            Vec3 end_vector = v3_sub(machine_grip_position(m), origin);
+            Vec3 target_vector = v3_sub(target, origin);
+            end_vector = v3_sub(end_vector, v3_scale(axis, v3_dot(end_vector, axis)));
+            target_vector = v3_sub(target_vector, v3_scale(axis, v3_dot(target_vector, axis)));
+            if (v3_length(end_vector) < 1e-6f || v3_length(target_vector) < 1e-6f)
+                continue;
+
+            float delta = atan2f(v3_dot(axis, v3_cross(end_vector, target_vector)),
+                                 v3_dot(end_vector, target_vector)) * radians_to_degrees;
+            delta = cg_clamp(delta, -max_step_degrees, max_step_degrees);
+            const JointConfig *limits = &MACHINE_CONFIG.joints[joint];
+            m->arm.angle[joint] = cg_clamp(m->arm.angle[joint] + delta, limits->min, limits->max);
+            update_world(m);
+        }
+
+        float candidate_error = v3_length(v3_sub(machine_grip_position(m), target));
+        if (candidate_error < best_error) {
+            best_error = candidate_error;
+            memcpy(best, m->arm.angle, sizeof(best));
+        }
+    }
+
+    /* The search is instantaneous; normal frame updates animate from the
+     * current pose toward its best bounded solution. */
+    memcpy(m->arm.angle, original, sizeof(original));
+    memcpy(m->arm.target, best, sizeof(best));
+    update_world(m);
+    m->ik_target = target;
+    m->ik_error = best_error;
+    m->ik_target_active = true;
+    if (error)
+        *error = best_error;
+    if (best_error <= tolerance)
+        message(m, "IK: alvo alcancavel; movimento em andamento.");
+    else
+        message(m, "IK: aproximando o maximo; ajuste as juntas se necessario.");
+    return best_error <= tolerance;
+}
 AABB machine_delivery_region(const PrizeMachine *m) {
     AABB region = scene_bounds(m->solids[m->tray_solid].node);
     region.min.y = region.max.y;
@@ -605,6 +674,8 @@ void machine_update(PrizeMachine *m, float dt) {
         }
         int delivered = m->delivered;
         physics_step(m, step);
+        if (m->ik_target_active)
+            m->ik_error = v3_length(v3_sub(machine_grip_position(m), m->ik_target));
         if (m->release_contact >= 0) {
             AABB p = scene_bounds(m->prizes[m->release_contact].node);
             if (!aabb_overlap(p, scene_bounds(m->arm.parts[3]), 0) &&
