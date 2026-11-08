@@ -6,7 +6,7 @@ Biblioteca de computação gráfica com OOP em **C11** e simulador 3D de uma má
 de prêmios, usando **OpenGL e freeglut**. O braço tem base, ombro, cotovelo, punho
 e dois dedos articulados. Controle as juntas, capture três alienígenas e solte-os na
 bandeja. A captura é determinística; o modo escolhido define o tempo, a intensidade
-dos quiques e a variação das posições iniciais dos aliens.
+dos quiques, a variação das posições iniciais dos aliens e o tamanho da bandeja.
 
 O visual é inspirado na máquina do **Pizza Planet, de Toy Story**.
 
@@ -29,7 +29,7 @@ make lib       # build/libcg.a, independente da aplicação
 make demo      # compila build/library_demo
 make example   # executa o exemplo independente
 make run       # compila e executa build/prize_machine
-make test      # matemática, estados, trajetórias e falhas de alocação
+make test      # matemática, estados, trajetórias e falhas de alocação (~1 min)
 make sanitize  # os mesmos testes com Clang, ASan e UBSan
 make smoke     # sessão gráfica automática completa; requer display
 make clean     # remove build/
@@ -45,12 +45,17 @@ livre: botão direito olha ao redor e a roda avança ou recua. **Home** restaura
 
 ## Modos de jogo
 
-| Modo | Tempo | Posições iniciais | Colisões |
-| --- | --- | --- | --- |
-| Sandbox | Sem limite | Pequena variação angular, distância constante | Quiques suaves para praticar |
-| Fácil | 4 minutos | Pequena variação angular, distância constante | Quiques leves e maior amortecimento |
-| Médio | 3 minutos | Mais variação angular e três distâncias possíveis | Quiques moderados |
-| Difícil | 2 minutos | Maior variação angular e sete distâncias possíveis | Quiques fortes e menor amortecimento |
+| Modo | Tempo | Bandeja (largura × profundidade) | Posições iniciais | Colisões |
+| --- | --- | --- | --- | --- |
+| Sandbox | Sem limite | 2,50 × 1,60 | Pequena variação angular, distância constante | Quiques suaves para praticar |
+| Fácil | 4 minutos | 2,35 × 1,40 | Pequena variação angular, distância constante | Quiques leves e maior amortecimento |
+| Médio | 3 minutos | 2,20 × 1,20 | Mais variação angular e três distâncias possíveis | Quiques moderados |
+| Difícil | 2 minutos | 2,05 × 1,00 | Maior variação angular e sete distâncias possíveis | Quiques fortes e menor amortecimento |
+
+As medidas usam unidades do cenário. A bandeja diminui em largura e profundidade,
+mantendo o centro e a altura. Mesmo no difícil, cabem três aliens separados;
+a validação dos spawns exige uma rota de entrega com margem nas bordas.
+O reset mantém o tamanho do modo atual, e a pausa preserva a partida.
 
 Cada nova partida ou reset sorteia as posições e embaralha as cores entre elas.
 Os aliens começam apoiados no piso, separados entre si e fora da bandeja e dos
@@ -65,9 +70,22 @@ Na pausa, **Resetar partida** reinicia o modo atual e **Voltar aos modos** encer
 a partida para escolher outro modo. **R** também reinicia durante o jogo.
 A ajuda congela o tempo. Vitória ou tempo esgotado encerram a rodada.
 
+## Estrutura do projeto
+
+```text
+include/cg/   cabeçalhos públicos da biblioteca
+src/cg/       biblioteca: matemática, geometrias, cena, câmera, renderização
+src/app/      simulador: máquina, física dos aliens, interface, configuração e tema
+examples/     exemplo independente que usa só a biblioteca
+tests/        testes de lógica e de falha de alocação
+docs/         manuais do usuário (PT e EN)
+```
+
 ## Documentação
 
-Veja o [manual do usuário](docs/MANUAL_DO_USUARIO.md).
+Veja o [manual do usuário](docs/MANUAL_DO_USUARIO.md) ([English](docs/USER_MANUAL.md)).
+Ele traz um passo a passo da primeira partida, todos os controles e as regras
+de captura e entrega.
 
 Validado em CachyOS Linux, freeglut 3.8.0 e OpenGL de compatibilidade 4.6/NVIDIA.
 Usa AABBs conservadoras, gravidade, colisões com quique e atrito simplificado numa

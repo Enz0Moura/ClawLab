@@ -116,7 +116,7 @@ static bool build_cabinet(PrizeMachine *m) {
         !solid(m, "pedestal", vec3(0, .15f, 0), vec3(.8f, .30f, .8f), DARK))
         return false;
     m->tray_solid = m->solid_count;
-    if (!solid(m, "bandeja", MACHINE_CONFIG.tray_center, MACHINE_CONFIG.tray_size,
+    if (!solid(m, "bandeja", MACHINE_CONFIG.tray_center, GAME_MODES[m->mode].tray_size,
                (Color){.18f, .68f, .55f}))
         return false;
     /* New structural parts stay outside the playable interior, but also
@@ -523,8 +523,12 @@ static bool spawn_route_valid(PrizeMachine *m, int p) {
         !spawn_move(m, 0, MACHINE_CONFIG.drop_yaw[p]))
         return false;
     AABB cargo = scene_bounds(m->prizes[p].node), tray = machine_delivery_region(m);
-    return cargo.min.x >= tray.min.x && cargo.max.x <= tray.max.x && cargo.min.z >= tray.min.z &&
-           cargo.max.z <= tray.max.z && cargo.min.y > tray.min.y;
+    /* Leave usable alignment room even on the smallest tray, rather than
+     * accepting a spawn whose only validated drop sits exactly on an edge. */
+    const float margin = .05f;
+    return cargo.min.x >= tray.min.x + margin && cargo.max.x <= tray.max.x - margin &&
+           cargo.min.z >= tray.min.z + margin && cargo.max.z <= tray.max.z - margin &&
+           cargo.min.y > tray.min.y;
 }
 static bool spawn_layout_valid(PrizeMachine *m) {
     if (!spawn_sites_valid(m))

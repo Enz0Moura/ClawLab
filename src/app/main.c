@@ -302,7 +302,7 @@ typedef struct {
     Camera camera;
     int active_joint;
     bool free_camera, debug;
-    Mat4 local[PRIZE_COUNT], world[PRIZE_COUNT], arm[ARM_PART_COUNT];
+    Mat4 local[PRIZE_COUNT], world[PRIZE_COUNT], arm[ARM_PART_COUNT], tray;
 } SmokeSnapshot;
 static SmokeSnapshot smoke_pause_snapshot;
 static int smoke_pause_frames;
@@ -312,6 +312,7 @@ static void snapshot_game(SmokeSnapshot *saved) {
     saved->active_joint = ui.active_joint;
     saved->free_camera = ui.free_camera;
     saved->debug = ui.debug;
+    saved->tray = machine->solids[machine->tray_solid].node->world;
     for (int p = 0; p < PRIZE_COUNT; ++p) {
         saved->local[p] = machine->prizes[p].node->local;
         saved->world[p] = machine->prizes[p].node->world;
@@ -322,7 +323,8 @@ static void snapshot_game(SmokeSnapshot *saved) {
 static bool matches_snapshot(const SmokeSnapshot *saved) {
     if (memcmp(&saved->machine, machine, sizeof(*machine)) != 0 ||
         !same_camera(saved->camera, ui.camera) || saved->active_joint != ui.active_joint ||
-        saved->free_camera != ui.free_camera || saved->debug != ui.debug)
+        saved->free_camera != ui.free_camera || saved->debug != ui.debug ||
+        memcmp(&saved->tray, &machine->solids[machine->tray_solid].node->world, sizeof(Mat4)) != 0)
         return false;
     for (int p = 0; p < PRIZE_COUNT; ++p)
         if (memcmp(&saved->local[p], &machine->prizes[p].node->local, sizeof(Mat4)) != 0 ||
@@ -396,6 +398,12 @@ static void smoke_step(float dt) {
                     !same_camera(ui.camera, camera_default()) || machine->mode != (GameMode)i ||
                     machine->time_remaining != GAME_MODES[i].time_limit) {
                     quit_failure("mode mouse selection");
+                    return;
+                }
+                AABB tray = scene_bounds(machine->solids[machine->tray_solid].node);
+                if (v3_length(v3_sub(v3_sub(tray.max, tray.min), GAME_MODES[i].tray_size)) >
+                    .001f) {
+                    quit_failure("mode selects its delivery tray size");
                     return;
                 }
                 key('f', 0, 0);
@@ -479,8 +487,14 @@ static void smoke_step(float dt) {
     }
     switch (smoke_phase) {
     case 0: {
-        if (smoke_prize == 0)
+        if (smoke_prize == 0) {
+            /* Random spawns may be behind the arm from the default angle.
+             * Orbit to the open side using the same mouse path as a player. */
+            mouse(GLUT_RIGHT_BUTTON, GLUT_DOWN, 400, 300);
+            motion(486, 300);
+            mouse(GLUT_RIGHT_BUTTON, GLUT_UP, 486, 300);
             pending_capture = "build/smoke_initial.ppm";
+        }
         Vec3 screen;
         if (!camera_project(&ui.camera,
                             mat4_point(machine->prizes[smoke_prize].node->world, vec3(0, 0, 0)),
@@ -638,12 +652,17 @@ static void smoke_step(float dt) {
             quit_failure("retry same difficulty");
             return;
         }
-        puts("prize_machine: graphical session passed (pause/resume, frozen state and timer, "
-             "random spawns, reset, return to modes, all 3 prizes, free camera, collision, "
-             "delivery, timeout)");
-        glutLeaveMainLoop();
+        if (ui.debug)
+            key('d', 0, 0);
+        pending_capture = "build/smoke_hard_tray.ppm";
         break;
     }
+    case 15:
+        puts("prize_machine: graphical session passed (pause/resume, frozen state and timer, "
+             "difficulty trays, random spawns, reset, return to modes, all 3 prizes, free camera, "
+             "collision, delivery, timeout)");
+        glutLeaveMainLoop();
+        break;
     default:
         break;
     }

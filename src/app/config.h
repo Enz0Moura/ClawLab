@@ -16,7 +16,7 @@ typedef struct {
     float max_step, collision_tolerance, gravity;
     float prize_yaw[PRIZE_COUNT], drop_yaw[PRIZE_COUNT];
     Color prize_colors[PRIZE_COUNT];
-    Vec3 tray_center, tray_size;
+    Vec3 tray_center;
     AABB workspace; /* Interior safety envelope, including the open sides. */
 } MachineConfig;
 extern const MachineConfig MACHINE_CONFIG;
@@ -25,6 +25,7 @@ typedef struct {
     const char *name;
     float time_limit, restitution, friction;
     int spawn_yaw_jitter, spawn_pose_first, spawn_pose_count;
+    Vec3 tray_size; /* Width/height/depth; retains room for three separate deliveries. */
 } ModeConfig;
 extern const ModeConfig GAME_MODES[MODE_COUNT];
 /* Known FK pose used by the safe fallback layout. No runtime IK. */

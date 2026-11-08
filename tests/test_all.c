@@ -193,6 +193,9 @@ static void test_full_game(void) {
     machine_open(m);
     advance(m, 2);
     Camera c = camera_default();
+    /* Random spawns can be hidden by the arm in the default view. Face the
+     * open side before testing selection, just as a player can orbit there. */
+    camera_orbit(&c, -30, 0);
     for (int p = 0; p < PRIZE_COUNT; ++p) {
         Vec3 screen;
         Ray ray;
@@ -330,6 +333,44 @@ static void place_prize(PrizeMachine *m, int p, Vec3 position, Vec3 velocity) {
     scene_update(m->prizes[p].node, mat4_identity());
     m->prizes[p].state = PRIZE_FALLING;
     m->prizes[p].velocity = velocity;
+}
+static void test_difficulty_trays(void) {
+    PrizeMachine *m = machine_create_seeded(MODE_SANDBOX, 42);
+    CHECK(m);
+    Vec3 previous_size = vec3(100, 0, 100);
+    for (int mode = MODE_SANDBOX; mode < MODE_COUNT; ++mode) {
+        CHECK(machine_start(m, (GameMode)mode));
+        AABB tray = scene_bounds(m->solids[m->tray_solid].node);
+        Vec3 size = v3_sub(tray.max, tray.min);
+        CHECK(size.x < previous_size.x && size.z < previous_size.z);
+        check_vec(v3_scale(v3_add(tray.min, tray.max), .5f), MACHINE_CONFIG.tray_center);
+        CHECK(near(tray.max.y, .12f));
+        AABB region = machine_delivery_region(m);
+        CHECK(near(region.min.x, tray.min.x) && near(region.max.x, tray.max.x));
+        CHECK(near(region.min.z, tray.min.z) && near(region.max.z, tray.max.z));
+        CHECK(near(region.min.y, tray.max.y));
+        CHECK(machine_reset(m));
+        AABB reset_tray = scene_bounds(m->solids[m->tray_solid].node);
+        check_vec(reset_tray.min, tray.min);
+        check_vec(reset_tray.max, tray.max);
+        previous_size = size;
+
+        /* Isolate the edge rule from random floor positions. A partly overhanging
+         * prize may rest on the tray, but must not earn a delivery. */
+        place_prize(m, 1, vec3(-1, .25f, -1.5f), vec3(0, 0, 0));
+        place_prize(m, 2, vec3(-1, .25f, -2.5f), vec3(0, 0, 0));
+        float half = MACHINE_CONFIG.prize_size * .5f;
+        Vec3 edge = vec3(tray.max.x - half + .03f, 1, MACHINE_CONFIG.tray_center.z);
+        place_prize(m, 0, edge, vec3(0, 0, 0));
+        advance(m, 12);
+        CHECK(m->prizes[0].state == PRIZE_AVAILABLE && m->delivered == 0);
+        CHECK(near(scene_bounds(m->prizes[0].node).min.y, tray.max.y));
+        edge.x = tray.max.x - half - .05f;
+        place_prize(m, 0, edge, vec3(0, 0, 0));
+        advance(m, 12);
+        CHECK(m->prizes[0].state == PRIZE_DELIVERED && m->delivered == 1);
+    }
+    machine_destroy(m);
 }
 static void test_modes_and_clock(void) {
     PrizeMachine *m = machine_create();
@@ -537,6 +578,13 @@ static void test_random_spawns(void) {
                     machine_update(m, 1.0f / 120);
                 CHECK(m->prizes[p].state == PRIZE_DELIVERED);
                 CHECK(m->delivered == collected + 1);
+                AABB landed = scene_bounds(m->prizes[p].node), tray = machine_delivery_region(m);
+                CHECK(landed.min.x >= tray.min.x + .049f && landed.max.x <= tray.max.x - .049f);
+                CHECK(landed.min.z >= tray.min.z + .049f && landed.max.z <= tray.max.z - .049f);
+                CHECK(near(landed.min.y, tray.min.y));
+                for (int other = 0; other < PRIZE_COUNT; ++other)
+                    if (other != p && m->prizes[other].state == PRIZE_DELIVERED)
+                        CHECK(!aabb_overlap(landed, scene_bounds(m->prizes[other].node), 0));
                 if (mode != MODE_SANDBOX)
                     CHECK(m->time_remaining > 0);
             }
@@ -580,12 +628,13 @@ int main(void) {
     test_full_game();
     test_limits_collision_time();
     test_occlusion_and_cargo();
+    test_difficulty_trays();
     test_modes_and_clock();
     test_bouncing_prizes();
     test_release_velocity();
     test_random_spawns();
-    printf("PASS: %d checks (math, camera, ownership, FK, picking, collisions, randomized spawns, "
-           "96 seeded rounds, all collection orders, reset)\n",
+    printf("PASS: %d checks (math, camera, ownership, FK, picking, collisions, difficulty trays, "
+           "randomized spawns, 96 seeded rounds, all collection orders, reset)\n",
            checks);
     return EXIT_SUCCESS;
 }

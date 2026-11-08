@@ -88,8 +88,11 @@ static void draw_world(const UserInterface *ui, const PrizeMachine *m) {
     render_camera(&ui->camera, 0, UI_BOTTOM, ui_view_width(ui), ui_view_height(ui));
     scene_draw(m->root);
     AABB tray = scene_bounds(m->solids[m->tray_solid].node);
-    render_line(vec3(-.42f, .125f, tray.min.z), vec3(-.42f, .125f, tray.max.z), ACCENT);
-    render_line(vec3(.42f, .125f, tray.min.z), vec3(.42f, .125f, tray.max.z), ACCENT);
+    for (int i = 1; i < PRIZE_COUNT; ++i) {
+        float x = tray.min.x + (tray.max.x - tray.min.x) * (float)i / PRIZE_COUNT;
+        render_line(vec3(x, tray.max.y + .005f, tray.min.z),
+                    vec3(x, tray.max.y + .005f, tray.max.z), ACCENT);
+    }
     if (m->selected >= 0) {
         AABB box = scene_bounds(m->prizes[m->selected].node);
         box.min = v3_sub(box.min, vec3(.035f, .035f, .035f));
@@ -141,8 +144,9 @@ static void labels(const UserInterface *ui, const PrizeMachine *m) {
                     m->selected == i ? ACCENT : MACHINE_CONFIG.prize_colors[i], false);
     }
     Vec3 screen;
-    if (camera_project(&ui->camera, vec3(0, .16f, 3.2f), ui_view_width(ui), ui_view_height(ui),
-                       &screen) &&
+    AABB tray = scene_bounds(m->solids[m->tray_solid].node);
+    Vec3 label = vec3((tray.min.x + tray.max.x) * .5f, tray.max.y + .04f, tray.max.z - .1f);
+    if (camera_project(&ui->camera, label, ui_view_width(ui), ui_view_height(ui), &screen) &&
         screen.x > 50 && screen.x < ui_view_width(ui) - 60 && screen.y < ui_view_height(ui) - 12) {
         render_rect(screen.x - 44, screen.y + UI_TOP - 15, 90, 22, INK);
         render_text(screen.x - 38, screen.y + UI_TOP, "ENTREGA", ACCENT, false);
@@ -297,10 +301,11 @@ static void menu(const UserInterface *ui) {
     render_text(first.x, 112, "ESCOLHA SUA MISSAO", GOLD, true);
     render_text(first.x, 143, "Resgate os 3 aliens. Clique em um modo ou pressione 1-4.", TEXT,
                 false);
-    const char *descriptions[] = {"Sem limite. Posicoes pouco variadas; quiques suaves.",
-                                  "4 min. Pequena variacao de posicao; quiques leves.",
-                                  "3 min. Distancias variadas; quiques moderados.",
-                                  "2 min. Maior variacao de posicao; quiques fortes."};
+    const char *descriptions[] = {
+        "Sem limite. Bandeja ampla; pouca variacao; quiques suaves.",
+        "4 min. Bandeja menor; pouca variacao; quiques leves.",
+        "3 min. Bandeja reduzida; distancias variadas; quiques moderados.",
+        "2 min. Menor bandeja; maior variacao; quiques fortes."};
     const Color colors[] = {
         {.69f, .91f, .24f}, {.24f, .80f, .74f}, {1, .81f, .18f}, {1, .32f, .30f}};
     for (int i = 0; i < MODE_COUNT; ++i) {
@@ -359,9 +364,7 @@ void ui_draw(const UserInterface *ui, const PrizeMachine *m) {
                 m->mode != MODE_SANDBOX && m->time_remaining < 30 ? (Color){1, .32f, .30f} : GOLD,
                 false);
     button((float)ui->width - 155, 23, 130, ui->paused ? "P  CONTINUAR" : "P  PAUSA", false);
-    render_text(25, 105,
-                ui->debug ? "DEPURACAO  /  D para ocultar"
-                          : "RESGATE A TRIPULACAO!",
+    render_text(25, 105, ui->debug ? "DEPURACAO  /  D para ocultar" : "RESGATE A TRIPULACAO!",
                 ui->debug ? (Color){1, .6f, .2f} : MUTED, false);
     panel(ui, m);
     render_rect(0, (float)ui->height - UI_BOTTOM, (float)ui_view_width(ui), UI_BOTTOM, INK);
