@@ -2,22 +2,12 @@
 
 **Português (Brasil)** | [English](README.en.md)
 
-Biblioteca de computação gráfica com OOP em **C11** e simulador 3D de uma máquina
-de prêmios, usando **OpenGL e freeglut**. O braço tem base, ombro, cotovelo, punho
+Simulador 3D de uma máquina de prêmios, usando **OpenGL e freeglut**. O braço tem base, ombro, cotovelo, punho
 e dois dedos articulados. Controle as juntas, capture três alienígenas e solte-os na
 bandeja. A captura é determinística; o modo escolhido define o tempo, a intensidade
 dos quiques, a variação das posições iniciais dos aliens e o tamanho da bandeja.
 
 O visual é inspirado na máquina do **Pizza Planet, de Toy Story**.
-
-Projeto para o **cenário 3 — Simulador de Braço Robótico**, CG 2026/2,
-CEFET/RJ, UnED Petrópolis. Além do controle FK, inclui IK de posição por CCD;
-pressione **I** e clique em um alvo.
-
-A arquitetura segue os padrões de `Geometry`, base incorporada, métodos com
-`self` e fábricas de
-[Enz0Moura/primeiro-trabalho-cg](https://github.com/Enz0Moura/primeiro-trabalho-cg/tree/c12a40e4254ea511ad8906883b9ca91b4a429dc0),
-com matemática 3D, árvore de cena, destrutores e propriedade de memória explícita.
 
 ## Compilar e executar
 
@@ -81,17 +71,4 @@ src/cg/       biblioteca: matemática, geometrias, cena, câmera, renderização
 src/app/      simulador: máquina, física dos aliens, interface, configuração e tema
 examples/     exemplo independente que usa só a biblioteca
 tests/        testes de lógica e de falha de alocação
-docs/         manuais do usuário (PT e EN)
 ```
-
-## Documentação
-
-Veja o [manual do usuário](docs/MANUAL_DO_USUARIO.md) ([English](docs/USER_MANUAL.md)).
-Ele traz um passo a passo da primeira partida, todos os controles e as regras
-de captura e entrega.
-
-Validado em CachyOS Linux, freeglut 3.8.0 e OpenGL de compatibilidade 4.6/NVIDIA.
-Usa CCD iterativo com limites de juntas, AABBs conservadoras, gravidade, colisões
-com quique e atrito simplificado numa região limitada da cabine. Não implementa
-autocolisão do braço nem rotação física dos prêmios. Veja o
-[relatório técnico de IK](docs/RELATORIO_TECNICO_IK.md) para detalhes do algoritmo.

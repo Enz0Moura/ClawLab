@@ -2,22 +2,12 @@
 
 [Português (Brasil)](README.md) | **English**
 
-A graphics library using OOP in **C11** and a 3D claw machine simulator built
-with **OpenGL and freeglut**. The arm has a base, shoulder, elbow, wrist and
+A 3D claw machine simulator built with **OpenGL and freeglut**. The arm has a base, shoulder, elbow, wrist and
 two articulated fingers. Control the joints, capture three aliens and release
 them into the delivery tray. Capture is deterministic; the selected mode sets the
 time limit, bounce strength, variation in the aliens' starting positions and tray size.
 
 The visuals are inspired by the **Pizza Planet claw machine from Toy Story**.
-
-Developed for **scenario 3 — Robotic Arm Simulator**, CG 2026/2,
-CEFET/RJ, UnED Petrópolis. It provides forward kinematics and position IK using
-cyclic coordinate descent (CCD); press **I** and click a target to use IK.
-
-The architecture follows the `Geometry`, embedded base struct, methods with
-`self` and factory patterns from
-[Enz0Moura/primeiro-trabalho-cg](https://github.com/Enz0Moura/primeiro-trabalho-cg/tree/c12a40e4254ea511ad8906883b9ca91b4a429dc0),
-with 3D math, a scene graph, destructors and explicit memory ownership.
 
 ## Build and run
 
@@ -83,14 +73,5 @@ src/cg/       library: math, geometries, scene, camera, rendering
 src/app/      simulator: machine, alien physics, interface, configuration and theme
 examples/     standalone example that uses only the library
 tests/        logic and allocation-failure tests
-docs/         user manuals (PT and EN)
 ```
 
-## Documentation
-
-See the [user manual](docs/USER_MANUAL.md) ([Português](docs/MANUAL_DO_USUARIO.md)).
-It has a first-game walkthrough, all the controls and the capture and delivery rules.
-
-Validated on CachyOS Linux, freeglut 3.8.0 and OpenGL 4.6 compatibility/NVIDIA.
-Uses conservative AABBs, gravity, bouncing collisions and simplified friction in
-a limited region inside the cabinet. Does not implement arm self-collision or physical prize rotation.
