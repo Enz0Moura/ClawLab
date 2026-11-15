@@ -82,7 +82,7 @@ static void stop_ik_motion(void) {
     if (!machine)
         return;
     for (int joint = 0; joint < JOINT_COUNT; ++joint)
-        machine_target_joint(machine, joint, machine->arm.angle[joint]);
+        machine_target_joint(machine, joint, machine->arm.angles.current[joint]);
 }
 static void cancel_ik_capture(void) {
     if (ik_capture_phase == IK_CAPTURE_APPROACHING || ik_capture_phase == IK_CAPTURE_OPENING)
@@ -196,7 +196,7 @@ static void update_ik_interaction_after_step(void) {
 
     Vec3 prize_position =
         mat4_point(machine->prizes[ik_capture_prize].node->world, vec3(0, 0, 0));
-    if (v3_length(v3_sub(prize_position, machine->ik_target)) > .04f && ik_capture_retargets < 3) {
+    if (v3_length(v3_sub(prize_position, machine->ik.target)) > .04f && ik_capture_retargets < 3) {
         ++ik_capture_retargets;
         machine_solve_ik(machine, prize_position, NULL);
         return;
@@ -373,7 +373,7 @@ static void special_up(int k, int x, int y) {
     if ((k == GLUT_KEY_LEFT && held_direction < 0) || (k == GLUT_KEY_RIGHT && held_direction > 0)) {
         held_direction = 0;
         /* Releasing a held key stops its remaining target immediately. */
-        machine->arm.target[ui.active_joint] = machine->arm.angle[ui.active_joint];
+        machine->arm.angles.target[ui.active_joint] = machine->arm.angles.current[ui.active_joint];
     }
 }
 static void mouse(int button, int state, int x, int y) {
@@ -479,7 +479,7 @@ static void update_game(float dt) {
         return;
     if (held_direction)
         machine_target_joint(machine, ui.active_joint,
-                             machine->arm.angle[ui.active_joint] +
+                             machine->arm.angles.current[ui.active_joint] +
                                  (float)held_direction *
                                      MACHINE_CONFIG.joints[ui.active_joint].speed * fminf(dt, .1f));
     update_ik_interaction_before_step(dt);
@@ -488,10 +488,10 @@ static void update_game(float dt) {
 }
 static void smoke_target(int joint, float value) {
     key((unsigned char)('1' + joint), 0, 0);
-    int steps = (int)lroundf((value - machine->arm.target[joint]) / 5);
+    int steps = (int)lroundf((value - machine->arm.angles.target[joint]) / 5);
     for (int i = 0; i < abs(steps); ++i)
         key(steps > 0 ? '+' : '-', 0, 0);
-    int fine = (int)lroundf(value - machine->arm.target[joint]);
+    int fine = (int)lroundf(value - machine->arm.angles.target[joint]);
     for (int i = 0; i < abs(fine); ++i)
         key(fine > 0 ? ']' : '[', 0, 0);
 }
@@ -626,7 +626,7 @@ static void smoke_step(float dt) {
                 if (!ui.menu || ui.paused || ui.free_camera || drag_button != -1 ||
                     !same_camera(ui.camera, camera_default()) ||
                     machine->time_remaining != GAME_MODES[i].time_limit ||
-                    machine->arm.angle[0] != MACHINE_CONFIG.joints[0].initial) {
+                    machine->arm.angles.current[0] != MACHINE_CONFIG.joints[0].initial) {
                     quit_failure("returning to modes discards the current round");
                     return;
                 }

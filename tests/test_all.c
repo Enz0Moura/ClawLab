@@ -31,11 +31,11 @@ static void target(PrizeMachine *m, int joint, float value) {
     unsigned old = m->blocked_moves;
     machine_target_joint(m, joint, value);
     advance(m, 8);
-    if (!near(m->arm.angle[joint], value))
+    if (!near(m->arm.angles.current[joint], value))
         fprintf(stderr, "joint %d requested %.2f reached %.2f, blocks %u, grip %.3f %.3f %.3f\n",
-                joint, value, m->arm.angle[joint], m->blocked_moves - old,
+                joint, value, m->arm.angles.current[joint], m->blocked_moves - old,
                 machine_grip_position(m).x, machine_grip_position(m).y, machine_grip_position(m).z);
-    CHECK(near(m->arm.angle[joint], value));
+    CHECK(near(m->arm.angles.current[joint], value));
     CHECK(m->blocked_moves == old);
 }
 static void test_math(void) {
@@ -241,15 +241,15 @@ static void test_limits_collision_time(void) {
     for (int i = 0; i < JOINT_COUNT; ++i) {
         CHECK(machine_reset(m));
         machine_target_joint(m, i, 1000);
-        CHECK(near(m->arm.target[i], MACHINE_CONFIG.joints[i].max));
+        CHECK(near(m->arm.angles.target[i], MACHINE_CONFIG.joints[i].max));
         advance(m, 10);
-        CHECK(m->arm.angle[i] <= MACHINE_CONFIG.joints[i].max);
+        CHECK(m->arm.angles.current[i] <= MACHINE_CONFIG.joints[i].max);
         CHECK(machine_pose_valid(m));
         CHECK(machine_reset(m));
         machine_target_joint(m, i, -1000);
-        CHECK(near(m->arm.target[i], MACHINE_CONFIG.joints[i].min));
+        CHECK(near(m->arm.angles.target[i], MACHINE_CONFIG.joints[i].min));
         advance(m, 10);
-        CHECK(m->arm.angle[i] >= MACHINE_CONFIG.joints[i].min);
+        CHECK(m->arm.angles.current[i] >= MACHINE_CONFIG.joints[i].min);
         CHECK(machine_pose_valid(m));
     }
     CHECK(machine_reset(m));
@@ -267,12 +267,12 @@ static void test_limits_collision_time(void) {
         machine_update(m, 1.0f / 30);
     for (int i = 0; i < 144; ++i)
         machine_update(n, 1.0f / 144);
-    CHECK(near(m->arm.angle[0], n->arm.angle[0]));
+    CHECK(near(m->arm.angles.current[0], n->arm.angles.current[0]));
     CHECK(machine_reset(m));
     machine_target_joint(m, 1, -85);
     advance(m, 5);
     CHECK(m->blocked_moves > 0);
-    CHECK(m->arm.angle[1] > -85);
+    CHECK(m->arm.angles.current[1] > -85);
     CHECK(machine_pose_valid(m));
     /* The back wall occludes a ray from outside the cabinet. */
     m->prizes[2].node->local =
@@ -298,42 +298,42 @@ static void test_inverse_kinematics(void) {
     float solution_error = INFINITY;
     CHECK(machine_solve_ik(m, goal, &solution_error));
     CHECK(solution_error <= .05f);
-    CHECK(m->ik_target_active);
-    check_vec(m->ik_target, goal);
+    CHECK(m->ik.target_active);
+    check_vec(m->ik.target, goal);
     CHECK(v3_length(v3_sub(machine_grip_position(m), initial)) < .001f);
-    CHECK(m->ik_error > solution_error);
+    CHECK(m->ik.error > solution_error);
     for (int joint = 0; joint < JOINT_COUNT; ++joint) {
-        CHECK(m->arm.target[joint] >= MACHINE_CONFIG.joints[joint].min);
-        CHECK(m->arm.target[joint] <= MACHINE_CONFIG.joints[joint].max);
+        CHECK(m->arm.angles.target[joint] >= MACHINE_CONFIG.joints[joint].min);
+        CHECK(m->arm.angles.target[joint] <= MACHINE_CONFIG.joints[joint].max);
     }
 
     advance(m, .25f);
-    CHECK(m->ik_error < .05f);
+    CHECK(m->ik.error < .05f);
     CHECK(v3_length(v3_sub(machine_grip_position(m), goal)) <= .05f);
 
     /* Selecting an alien aims at its center and retargeting during motion
      * replaces the route from the arm's current pose. */
     Vec3 prize_goal = mat4_point(m->prizes[0].node->world, vec3(0, 0, 0));
     CHECK(machine_solve_ik(m, prize_goal, &solution_error));
-    CHECK(m->ik_path_count > 0);
-    float base_before_nudge = m->arm.angle[0];
+    CHECK(m->ik.path_count > 0);
+    float base_before_nudge = m->arm.angles.current[0];
     machine_nudge_joint(m, 0, 1);
-    CHECK(m->ik_path_count == 0);
-    CHECK(near(m->arm.target[0], base_before_nudge + 1));
+    CHECK(m->ik.path_count == 0);
+    CHECK(near(m->arm.angles.target[0], base_before_nudge + 1));
     for (int joint = 1; joint < JOINT_COUNT; ++joint)
-        CHECK(near(m->arm.target[joint], m->arm.angle[joint]));
-    CHECK(!m->ik_target_active);
+        CHECK(near(m->arm.angles.target[joint], m->arm.angles.current[joint]));
+    CHECK(!m->ik.target_active);
     prize_goal = mat4_point(m->prizes[1].node->world, vec3(0, 0, 0));
     CHECK(machine_solve_ik(m, prize_goal, &solution_error));
     CHECK(solution_error <= .05f);
     advance(m, 15);
-    CHECK(m->ik_error <= .05f);
+    CHECK(m->ik.error <= .05f);
     CHECK(machine_capture_candidate(m, NULL) == 1);
     CHECK(machine_pose_valid(m));
     prize_goal = mat4_point(m->prizes[2].node->world, vec3(0, 0, 0));
     CHECK(machine_solve_ik(m, prize_goal, &solution_error));
     advance(m, 15);
-    CHECK(m->ik_error <= .05f);
+    CHECK(m->ik.error <= .05f);
     CHECK(machine_capture_candidate(m, NULL) == 2);
     CHECK(machine_pose_valid(m));
     CHECK(m->blocked_moves == 0);
@@ -342,8 +342,8 @@ static void test_inverse_kinematics(void) {
     CHECK(!machine_solve_ik(m, vec3(3.6f, 4.3f, 3.3f), &solution_error));
     CHECK(solution_error > .05f);
     for (int joint = 0; joint < JOINT_COUNT; ++joint) {
-        CHECK(m->arm.target[joint] >= MACHINE_CONFIG.joints[joint].min);
-        CHECK(m->arm.target[joint] <= MACHINE_CONFIG.joints[joint].max);
+        CHECK(m->arm.angles.target[joint] >= MACHINE_CONFIG.joints[joint].min);
+        CHECK(m->arm.angles.target[joint] <= MACHINE_CONFIG.joints[joint].max);
     }
 
     machine_destroy(reference);
@@ -456,12 +456,12 @@ static void test_modes_and_clock(void) {
         machine_target_joint(m, 0, 20);
         machine_update(m, .1f);
         CHECK(m->round == ROUND_LOST && m->time_remaining == 0);
-        float angle = m->arm.angle[0], target_before = m->arm.target[0];
+        float angle = m->arm.angles.current[0], target_before = m->arm.angles.target[0];
         machine_target_joint(m, 0, -50);
         machine_close(m);
         machine_open(m);
         machine_update(m, 1);
-        CHECK(m->arm.angle[0] == angle && m->arm.target[0] == target_before);
+        CHECK(m->arm.angles.current[0] == angle && m->arm.angles.target[0] == target_before);
         CHECK(m->arm.opening == MACHINE_CONFIG.finger_max);
         CHECK(machine_capture_candidate(m, NULL) == -1);
         CHECK(machine_reset(m));
@@ -561,7 +561,7 @@ static void wait_for_arm(PrizeMachine *m) {
 static void timed_target(PrizeMachine *m, int joint, float angle) {
     machine_target_joint(m, joint, angle);
     wait_for_arm(m);
-    CHECK(near(m->arm.angle[joint], angle));
+    CHECK(near(m->arm.angles.current[joint], angle));
 }
 static void test_random_spawns(void) {
     const int orders[][PRIZE_COUNT] = {{0, 1, 2}, {0, 2, 1}, {1, 0, 2},
