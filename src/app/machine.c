@@ -188,7 +188,7 @@ PrizeMachine *machine_create_seeded(GameMode mode, uint32_t seed) {
     PrizeMachine *m = calloc(1, sizeof(*m));
     if (!m)
         return NULL;
-    m->selected = m->held = m->release_contact = -1;
+    m->selected = m->held = m->release_contact = m->capture_target = -1;
     m->mode = mode;
     m->time_remaining = GAME_MODES[mode].time_limit;
     m->spawn_seed = seed;
@@ -307,6 +307,44 @@ static float ik_joint_distance_squared(const float a[JOINT_COUNT],
     return distance;
 }
 
+static float ik_orientation_error(Mat4 current, Mat4 target) {
+    static const Vec3 basis[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    float trace = 0;
+    for (int axis = 0; axis < 3; ++axis)
+        trace += v3_dot(v3_normalize(mat4_vector(current, basis[axis])),
+                        v3_normalize(mat4_vector(target, basis[axis])));
+    float cosine = cg_clamp((trace - 1.0f) * .5f, -1.0f, 1.0f);
+    return acosf(cosine) * 57.29577951308232f;
+}
+
+static float ik_pose_score(float position_error, float orientation_error, bool orientation_active) {
+    if (!orientation_active)
+        return position_error;
+    const float orientation_lever = 1.5f;
+    float weighted_orientation = cg_radians(orientation_error) * orientation_lever;
+    return sqrtf(position_error * position_error + weighted_orientation * weighted_orientation);
+}
+
+static bool ik_goal_reached(float position_error, float orientation_error,
+                            bool orientation_active) {
+    return position_error <= MACHINE_IK_POSITION_TOLERANCE &&
+           (!orientation_active || orientation_error <= MACHINE_IK_ORIENTATION_TOLERANCE);
+}
+
+static Mat4 prize_grip_orientation(const Prize *prize) {
+    Mat4 alien = mat4_identity();
+    Mat4 world = prize->node->world;
+    for (int column = 0; column < 3; ++column) {
+        Vec3 axis = v3_normalize(vec3(world.m[column * 4], world.m[column * 4 + 1],
+                                      world.m[column * 4 + 2]));
+        alien.m[column * 4] = axis.x;
+        alien.m[column * 4 + 1] = axis.y;
+        alien.m[column * 4 + 2] = axis.z;
+    }
+    /* The gripper's local +Y points down toward the prize at a valid grasp. */
+    return mat4_mul(alien, mat4_rotate_z(180));
+}
+
 static bool plan_ik_path(PrizeMachine *m, const float start[JOINT_COUNT],
                          const float goal[JOINT_COUNT], int *path_count,
                          float path[MACHINE_IK_PATH_MAX][JOINT_COUNT]) {
@@ -418,20 +456,29 @@ static bool plan_ik_path(PrizeMachine *m, const float start[JOINT_COUNT],
     return true;
 }
 
-static float solve_ik_seed(PrizeMachine *m, Vec3 target,
-                           const float seed[JOINT_COUNT], float solution[JOINT_COUNT]) {
+static float solve_ik_seed(PrizeMachine *m, Vec3 target, const Mat4 *target_orientation,
+                           const float seed[JOINT_COUNT], float solution[JOINT_COUNT],
+                           float *position_error, float *orientation_error) {
     enum { MAX_ITERATIONS = 120 };
-    const float tolerance = .05f;
     const float max_step_degrees = 18.0f;
     const float radians_to_degrees = 57.29577951308232f;
+    const bool orientation_active = target_orientation != NULL;
+    static const Vec3 basis[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
     memcpy(m->arm.angles.current, seed, sizeof(m->arm.angles.current));
     update_world(m);
     memcpy(solution, seed, sizeof(m->arm.angles.current));
-    float best_error = v3_length(v3_sub(machine_grip_position(m), target));
+    float best_position_error = v3_length(v3_sub(machine_grip_position(m), target));
+    float best_orientation_error =
+        orientation_active ? ik_orientation_error(m->arm.grip->world, *target_orientation) : 0;
+    float best_score =
+        ik_pose_score(best_position_error, best_orientation_error, orientation_active);
 
-    /* CCD changes one degree of freedom at a time. Multiple legal starting
-     * poses are tried below because joint limits create distinct IK branches. */
-    for (int iteration = 0; iteration < MAX_ITERATIONS && best_error > tolerance; ++iteration) {
+    /* Each joint step minimizes position error and, when requested, full tool
+     * orientation using the same one-dimensional rotation about that joint. */
+    for (int iteration = 0;
+         iteration < MAX_ITERATIONS &&
+         !ik_goal_reached(best_position_error, best_orientation_error, orientation_active);
+         ++iteration) {
         for (int joint = JOINT_COUNT - 1; joint >= 0; --joint) {
             update_world(m);
             SceneNode *node = m->arm.joint[joint];
@@ -443,11 +490,27 @@ static float solve_ik_seed(PrizeMachine *m, Vec3 target,
             Vec3 target_vector = v3_sub(target, origin);
             end_vector = v3_sub(end_vector, v3_scale(axis, v3_dot(end_vector, axis)));
             target_vector = v3_sub(target_vector, v3_scale(axis, v3_dot(target_vector, axis)));
-            if (v3_length(end_vector) < 1e-6f || v3_length(target_vector) < 1e-6f)
+            float sine = v3_dot(axis, v3_cross(end_vector, target_vector));
+            float cosine = v3_dot(end_vector, target_vector);
+            if (orientation_active) {
+                const float orientation_weight = 2.25f; /* 1.5 unit length squared. */
+                for (int local_axis = 0; local_axis < 3; ++local_axis) {
+                    Vec3 current_axis =
+                        v3_normalize(mat4_vector(m->arm.grip->world, basis[local_axis]));
+                    Vec3 desired_axis =
+                        v3_normalize(mat4_vector(*target_orientation, basis[local_axis]));
+                    Vec3 current_projected =
+                        v3_sub(current_axis, v3_scale(axis, v3_dot(current_axis, axis)));
+                    Vec3 desired_projected =
+                        v3_sub(desired_axis, v3_scale(axis, v3_dot(desired_axis, axis)));
+                    sine += orientation_weight * v3_dot(axis, v3_cross(current_axis, desired_axis));
+                    cosine += orientation_weight * v3_dot(current_projected, desired_projected);
+                }
+            }
+            if (fabsf(sine) < 1e-8f && fabsf(cosine) < 1e-8f)
                 continue;
 
-            float delta = atan2f(v3_dot(axis, v3_cross(end_vector, target_vector)),
-                                 v3_dot(end_vector, target_vector)) * radians_to_degrees;
+            float delta = atan2f(sine, cosine) * radians_to_degrees;
             delta = cg_clamp(delta, -max_step_degrees, max_step_degrees);
             const JointConfig *limits = &MACHINE_CONFIG.joints[joint];
             m->arm.angles.current[joint] =
@@ -455,17 +518,30 @@ static float solve_ik_seed(PrizeMachine *m, Vec3 target,
             update_world(m);
         }
 
-        float candidate_error = v3_length(v3_sub(machine_grip_position(m), target));
-        if (candidate_error < best_error) {
-            best_error = candidate_error;
+        float candidate_position_error = v3_length(v3_sub(machine_grip_position(m), target));
+        float candidate_orientation_error =
+            orientation_active ? ik_orientation_error(m->arm.grip->world, *target_orientation) : 0;
+        float candidate_score =
+            ik_pose_score(candidate_position_error, candidate_orientation_error,
+                          orientation_active);
+        if (candidate_score < best_score) {
+            best_position_error = candidate_position_error;
+            best_orientation_error = candidate_orientation_error;
+            best_score = candidate_score;
             memcpy(solution, m->arm.angles.current, sizeof(m->arm.angles.current));
         }
     }
-    return best_error;
+    if (position_error)
+        *position_error = best_position_error;
+    if (orientation_error)
+        *orientation_error = best_orientation_error;
+    return best_score;
 }
 
-bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
-    const float tolerance = .05f;
+static bool machine_solve_ik_internal(PrizeMachine *m, Vec3 target,
+                                      const Mat4 *target_orientation,
+                                      float *position_error, float *orientation_error) {
+    const bool orientation_active = target_orientation != NULL;
     if (!m || m->round != ROUND_PLAYING || !isfinite(target.x) || !isfinite(target.y) ||
         !isfinite(target.z))
         return false;
@@ -480,12 +556,18 @@ bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
     float original[JOINT_COUNT], best[JOINT_COUNT];
     memcpy(original, m->arm.angles.current, sizeof(original));
     memcpy(best, original, sizeof(best));
-    float best_error = v3_length(v3_sub(machine_grip_position(m), target));
-    float candidates[16][JOINT_COUNT], candidate_errors[16];
+    float best_position_error = v3_length(v3_sub(machine_grip_position(m), target));
+    float best_orientation_error =
+        orientation_active ? ik_orientation_error(m->arm.grip->world, *target_orientation) : 0;
+    float best_score =
+        ik_pose_score(best_position_error, best_orientation_error, orientation_active);
+    float candidates[16][JOINT_COUNT], candidate_scores[16], candidate_positions[16];
+    float candidate_orientations[16];
     float path[MACHINE_IK_PATH_MAX][JOINT_COUNT], selected[JOINT_COUNT];
     int candidate_count = 0;
     int path_count = 0;
-    float selected_error = best_error;
+    float selected_position_error = best_position_error;
+    float selected_orientation_error = best_orientation_error;
     bool planned = false;
     static const float restart_poses[][JOINT_COUNT] = {
         {0, -25, -85, -70}, {0, -45, -85, -50}, {55, -20, -100, -30},
@@ -505,30 +587,48 @@ bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
                 seed[joint] = cg_clamp(restart_poses[attempt][joint], limits->min, limits->max);
             }
         }
-        float candidate_error = solve_ik_seed(m, target, seed, solution);
-        if (candidate_error < best_error) {
-            best_error = candidate_error;
+        float candidate_position_error, candidate_orientation_error;
+        float candidate_score = solve_ik_seed(m, target, target_orientation, seed, solution,
+                                               &candidate_position_error,
+                                               &candidate_orientation_error);
+        if (candidate_score < best_score) {
+            best_score = candidate_score;
+            best_position_error = candidate_position_error;
+            best_orientation_error = candidate_orientation_error;
             memcpy(best, solution, sizeof(best));
         }
-        if (candidate_error > tolerance || !pose_valid_at(m, solution))
+        if (!ik_goal_reached(candidate_position_error, candidate_orientation_error,
+                             orientation_active) ||
+            !pose_valid_at(m, solution))
             continue;
         bool duplicate = false;
         for (int existing = 0; existing < candidate_count; ++existing)
             if (ik_joint_distance_squared(candidates[existing], solution) < 4.0f) {
                 duplicate = true;
-                if (candidate_error < candidate_errors[existing])
-                    candidate_errors[existing] = candidate_error;
+                if (candidate_score < candidate_scores[existing]) {
+                    memcpy(candidates[existing], solution, sizeof(solution));
+                    candidate_scores[existing] = candidate_score;
+                    candidate_positions[existing] = candidate_position_error;
+                    candidate_orientations[existing] = candidate_orientation_error;
+                }
                 break;
             }
         if (!duplicate && candidate_count < 16) {
             memcpy(candidates[candidate_count], solution, sizeof(solution));
-            candidate_errors[candidate_count++] = candidate_error;
+            candidate_scores[candidate_count] = candidate_score;
+            candidate_positions[candidate_count] = candidate_position_error;
+            candidate_orientations[candidate_count] = candidate_orientation_error;
+            ++candidate_count;
         }
-        if (attempt < 0 && candidate_error <= tolerance && !duplicate) {
+        if (attempt < 0 &&
+            ik_goal_reached(candidate_position_error, candidate_orientation_error,
+                            orientation_active) &&
+            !duplicate) {
             planned = plan_ik_path(m, original, solution, &path_count, path);
             if (planned) {
                 memcpy(selected, solution, sizeof(selected));
-                selected_error = candidate_error;
+                selected_position_error = candidate_position_error;
+                selected_orientation_error = candidate_orientation_error;
             }
         }
     }
@@ -537,7 +637,9 @@ bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
      * outside the arm's true reach, if it can be approached safely. */
     if (candidate_count == 0 && pose_valid_at(m, best)) {
         memcpy(candidates[0], best, sizeof(best));
-        candidate_errors[0] = best_error;
+        candidate_scores[0] = best_score;
+        candidate_positions[0] = best_position_error;
+        candidate_orientations[0] = best_orientation_error;
         candidate_count = 1;
     }
 
@@ -560,7 +662,8 @@ bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
         planned = plan_ik_path(m, original, candidates[nearest], &path_count, path);
         if (planned) {
             memcpy(selected, candidates[nearest], sizeof(selected));
-            selected_error = candidate_errors[nearest];
+            selected_position_error = candidate_positions[nearest];
+            selected_orientation_error = candidate_orientations[nearest];
         }
     }
 
@@ -572,10 +675,18 @@ bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
         m->ik.path_count = m->ik.path_index = 0;
         memcpy(m->arm.angles.target, original, sizeof(original));
         m->ik.target = target;
+        m->ik.target_orientation = orientation_active ? *target_orientation : mat4_identity();
+        m->ik.orientation_active = orientation_active;
         m->ik.error = v3_length(v3_sub(machine_grip_position(m), target));
+        m->ik.orientation_error =
+            orientation_active
+                ? ik_orientation_error(m->arm.grip->world, *target_orientation)
+                : 0;
         m->ik.target_active = true;
-        if (error)
-            *error = m->ik.error;
+        if (position_error)
+            *position_error = m->ik.error;
+        if (orientation_error)
+            *orientation_error = m->ik.orientation_error;
         message(m, "IK: nao encontrei uma rota livre de colisao.");
         return false;
     }
@@ -584,15 +695,60 @@ bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
     m->ik.path_index = 1;
     memcpy(m->arm.angles.target, m->ik.path[0], sizeof(m->arm.angles.target));
     m->ik.target = target;
+    m->ik.target_orientation = orientation_active ? *target_orientation : mat4_identity();
+    m->ik.orientation_active = orientation_active;
     m->ik.error = v3_length(v3_sub(machine_grip_position(m), target));
+    m->ik.orientation_error =
+        orientation_active ? ik_orientation_error(m->arm.grip->world, *target_orientation) : 0;
     m->ik.target_active = true;
-    if (error)
-        *error = selected_error;
-    if (selected_error <= tolerance)
+    if (position_error)
+        *position_error = selected_position_error;
+    if (orientation_error)
+        *orientation_error = selected_orientation_error;
+    bool reached = ik_goal_reached(selected_position_error, selected_orientation_error,
+                                   orientation_active);
+    if (reached)
         message(m, "IK: alvo alcancavel; movimento em andamento.");
     else
         message(m, "IK: aproximando o maximo; ajuste as juntas se necessario.");
-    return selected_error <= tolerance;
+    return reached;
+}
+
+static bool valid_rotation(Mat4 orientation) {
+    Vec3 axes[3] = {mat4_vector(orientation, vec3(1, 0, 0)),
+                    mat4_vector(orientation, vec3(0, 1, 0)),
+                    mat4_vector(orientation, vec3(0, 0, 1))};
+    for (int i = 0; i < 3; ++i) {
+        if (!isfinite(axes[i].x) || !isfinite(axes[i].y) || !isfinite(axes[i].z) ||
+            fabsf(v3_length(axes[i]) - 1.0f) > .01f)
+            return false;
+        for (int j = 0; j < i; ++j)
+            if (fabsf(v3_dot(axes[i], axes[j])) > .01f)
+                return false;
+    }
+    return v3_dot(axes[0], v3_cross(axes[1], axes[2])) > .99f;
+}
+
+bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
+    return machine_solve_ik_internal(m, target, NULL, error, NULL);
+}
+
+bool machine_solve_ik_pose(PrizeMachine *m, Vec3 target, Mat4 target_orientation,
+                           float *position_error, float *orientation_error) {
+    if (!valid_rotation(target_orientation))
+        return false;
+    return machine_solve_ik_internal(m, target, &target_orientation, position_error,
+                                     orientation_error);
+}
+
+bool machine_solve_ik_capture(PrizeMachine *m, int prize, float *position_error,
+                              float *orientation_error) {
+    if (!m || prize < 0 || prize >= PRIZE_COUNT ||
+        m->prizes[prize].state != PRIZE_AVAILABLE)
+        return false;
+    Vec3 target = mat4_point(m->prizes[prize].node->world, vec3(0, 0, 0));
+    Mat4 orientation = prize_grip_orientation(&m->prizes[prize]);
+    return machine_solve_ik_pose(m, target, orientation, position_error, orientation_error);
 }
 AABB machine_delivery_region(const PrizeMachine *m) {
     AABB region = scene_bounds(m->solids[m->tray_solid].node);
@@ -656,9 +812,129 @@ static bool inside_workspace(AABB box) {
     return box.min.x >= w.min.x - t && box.max.x <= w.max.x + t && box.min.y >= w.min.y - t &&
            box.max.y <= w.max.y + t && box.min.z >= w.min.z - t && box.max.z <= w.max.z + t;
 }
+typedef struct {
+    Vec3 center, axis[3];
+    float half[3];
+} OrientedBounds;
+
+enum {
+    ARM_UPPER_LINK = 0,
+    ARM_FOREARM = 1,
+    ARM_PALM = 2,
+    ARM_FINGER_LEFT = 3,
+    ARM_FINGER_RIGHT = 4,
+    ARM_SHOULDER_HUB = 5,
+    ARM_ELBOW_HUB = 6,
+    ARM_WRIST_HUB = 7,
+    ARM_BASE_ROTOR = 8
+};
+
+static bool oriented_bounds(const SceneNode *node, OrientedBounds *bounds) {
+    if (!node || !node->geometry || !bounds)
+        return false;
+    AABB local = node->geometry->bounds;
+    Vec3 local_center = v3_scale(v3_add(local.min, local.max), .5f);
+    Vec3 local_half = v3_scale(v3_sub(local.max, local.min), .5f);
+    bounds->center = mat4_point(node->world, local_center);
+    Vec3 columns[3] = {vec3(node->world.m[0], node->world.m[1], node->world.m[2]),
+                       vec3(node->world.m[4], node->world.m[5], node->world.m[6]),
+                       vec3(node->world.m[8], node->world.m[9], node->world.m[10])};
+    float local_extent[3] = {local_half.x, local_half.y, local_half.z};
+    for (int axis = 0; axis < 3; ++axis) {
+        float scale = v3_length(columns[axis]);
+        if (scale < 1e-8f)
+            return false;
+        bounds->axis[axis] = v3_scale(columns[axis], 1.0f / scale);
+        bounds->half[axis] = local_extent[axis] * scale;
+    }
+    return true;
+}
+
+/* Separating-axis test for the OBBs of two arm parts. The tolerance leaves a
+ * small clearance; unlike world AABBs, it does not reject harmless projections. */
+static bool oriented_bounds_overlap(OrientedBounds a, OrientedBounds b, float tolerance) {
+    float rotation[3][3], absolute[3][3];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            rotation[i][j] = v3_dot(a.axis[i], b.axis[j]);
+            absolute[i][j] = fabsf(rotation[i][j]) + 1e-6f;
+        }
+
+    Vec3 offset = v3_sub(b.center, a.center);
+    float translated[3] = {v3_dot(offset, a.axis[0]), v3_dot(offset, a.axis[1]),
+                           v3_dot(offset, a.axis[2])};
+    for (int i = 0; i < 3; ++i) {
+        float radius_a = a.half[i];
+        float radius_b = 0;
+        for (int j = 0; j < 3; ++j)
+            radius_b += b.half[j] * absolute[i][j];
+        if (fabsf(translated[i]) >= radius_a + radius_b - tolerance)
+            return false;
+    }
+    for (int j = 0; j < 3; ++j) {
+        float radius_a = 0;
+        for (int i = 0; i < 3; ++i)
+            radius_a += a.half[i] * absolute[i][j];
+        if (fabsf(translated[0] * rotation[0][j] + translated[1] * rotation[1][j] +
+                  translated[2] * rotation[2][j]) >=
+            radius_a + b.half[j] - tolerance)
+            return false;
+    }
+
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            float cross_axis_length_squared = 1.0f - rotation[i][j] * rotation[i][j];
+            if (cross_axis_length_squared < 1e-8f)
+                continue;
+            float radius_a = a.half[(i + 1) % 3] * absolute[(i + 2) % 3][j] +
+                             a.half[(i + 2) % 3] * absolute[(i + 1) % 3][j];
+            float radius_b = b.half[(j + 1) % 3] * absolute[i][(j + 2) % 3] +
+                             b.half[(j + 2) % 3] * absolute[i][(j + 1) % 3];
+            float distance = fabsf(translated[(i + 2) % 3] * rotation[(i + 1) % 3][j] -
+                                   translated[(i + 1) % 3] * rotation[(i + 2) % 3][j]);
+            float margin = tolerance * sqrtf(cross_axis_length_squared);
+            if (distance >= radius_a + radius_b - margin)
+                return false;
+        }
+    return true;
+}
+
+static bool arm_parts_share_joint(int first, int second) {
+    if (first > second) {
+        int swap = first;
+        first = second;
+        second = swap;
+    }
+    return (first == ARM_UPPER_LINK &&
+            (second == ARM_FOREARM || second == ARM_SHOULDER_HUB ||
+             second == ARM_ELBOW_HUB || second == ARM_BASE_ROTOR)) ||
+           (first == ARM_FOREARM &&
+            (second == ARM_PALM || second == ARM_FINGER_LEFT || second == ARM_FINGER_RIGHT ||
+             second == ARM_ELBOW_HUB || second == ARM_WRIST_HUB)) ||
+           (first == ARM_PALM &&
+            (second == ARM_FINGER_LEFT || second == ARM_FINGER_RIGHT || second == ARM_WRIST_HUB)) ||
+           ((first == ARM_FINGER_LEFT || first == ARM_FINGER_RIGHT) && second == ARM_WRIST_HUB) ||
+           (first == ARM_SHOULDER_HUB && second == ARM_BASE_ROTOR);
+}
+
 bool machine_pose_valid(const PrizeMachine *m) {
     float tolerance = MACHINE_CONFIG.collision_tolerance;
     int candidate = machine_capture_candidate(m, NULL);
+    if (m->capture_target >= 0 && candidate != m->capture_target)
+        candidate = -1;
+    for (int first = 0; first < ARM_PART_COUNT; ++first) {
+        OrientedBounds first_bounds;
+        if (!oriented_bounds(m->arm.parts[first], &first_bounds))
+            return false;
+        for (int second = first + 1; second < ARM_PART_COUNT; ++second) {
+            if (arm_parts_share_joint(first, second))
+                continue;
+            OrientedBounds second_bounds;
+            if (!oriented_bounds(m->arm.parts[second], &second_bounds) ||
+                oriented_bounds_overlap(first_bounds, second_bounds, tolerance))
+                return false;
+        }
+    }
     for (int part = 0; part < ARM_PART_COUNT; ++part) {
         AABB bounds = scene_bounds(m->arm.parts[part]);
         if (!inside_workspace(bounds))
@@ -727,6 +1003,7 @@ void machine_nudge_joint(PrizeMachine *m, int joint, float degrees) {
 void machine_open(PrizeMachine *m) {
     if (m->round != ROUND_PLAYING)
         return;
+    m->capture_target = -1;
     Vec3 release_velocity = machine_at_target(m) ? vec3(0, 0, 0) : m->held_velocity;
     m->arm.opening_target = MACHINE_CONFIG.finger_max;
     if (m->held >= 0) {
@@ -741,15 +1018,27 @@ void machine_open(PrizeMachine *m) {
     } else
         message(m, "Abrindo a garra.");
 }
-void machine_close(PrizeMachine *m) {
+static bool start_closing(PrizeMachine *m, int capture_target) {
     if (m->round != ROUND_PLAYING)
-        return;
+        return false;
     if (m->held >= 0) {
         message(m, "Garra ocupada.");
-        return;
+        return false;
     }
+    if (capture_target >= 0 && machine_capture_candidate(m, NULL) != capture_target)
+        return false;
+    m->capture_target = capture_target;
     m->arm.opening_target = MACHINE_CONFIG.finger_min;
     message(m, "Fechando a garra.");
+    return true;
+}
+void machine_close(PrizeMachine *m) {
+    (void)start_closing(m, -1);
+}
+bool machine_close_for_prize(PrizeMachine *m, int prize) {
+    if (!m || prize < 0 || prize >= PRIZE_COUNT || m->prizes[prize].state != PRIZE_AVAILABLE)
+        return false;
+    return start_closing(m, prize);
 }
 static float approach(float value, float target, float step) {
     return value + cg_clamp(target - value, -step, step);
@@ -836,6 +1125,12 @@ static void move_fingers(PrizeMachine *m, float dt) {
         return;
     float required = 0;
     int candidate = machine_capture_candidate(m, &required);
+    if (m->capture_target >= 0 && candidate != m->capture_target) {
+        m->capture_target = -1;
+        m->arm.opening_target = old;
+        message(m, "Captura cancelada: premio fora da garra.");
+        return;
+    }
     m->arm.opening = new_angle;
     update_world(m);
     if (!machine_pose_valid(m)) {
@@ -854,6 +1149,7 @@ static void move_fingers(PrizeMachine *m, float dt) {
         p->velocity = vec3(0, 0, 0);
         m->held_velocity = vec3(0, 0, 0);
         m->held = candidate;
+        m->capture_target = -1;
         m->arm.opening_target = new_angle;
         message(m, "Premio capturado!");
     }
@@ -1024,8 +1320,12 @@ void machine_update(PrizeMachine *m, float dt) {
         }
         int delivered = m->delivered;
         physics_step(m, step);
-        if (m->ik.target_active)
+        if (m->ik.target_active) {
             m->ik.error = v3_length(v3_sub(machine_grip_position(m), m->ik.target));
+            if (m->ik.orientation_active)
+                m->ik.orientation_error =
+                    ik_orientation_error(m->arm.grip->world, m->ik.target_orientation);
+        }
         if (m->release_contact >= 0) {
             AABB p = scene_bounds(m->prizes[m->release_contact].node);
             if (!aabb_overlap(p, scene_bounds(m->arm.parts[3]), 0) &&

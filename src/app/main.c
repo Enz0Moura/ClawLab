@@ -162,12 +162,14 @@ static void update_ik_interaction_before_step(float dt) {
     }
 
     if (ik_capture_phase == IK_CAPTURE_OPENING && machine_at_target(machine)) {
-        Vec3 target = mat4_point(machine->prizes[ik_capture_prize].node->world, vec3(0, 0, 0));
         ik_capture_phase = IK_CAPTURE_APPROACHING;
-        machine_solve_ik(machine, target, NULL);
+        if (!machine_solve_ik_capture(machine, ik_capture_prize, NULL, NULL)) {
+            cancel_ik_capture();
+            app_message("Captura cancelada: pose IK inalcançavel.");
+        }
     } else if (ik_capture_phase == IK_CAPTURE_CLOSING &&
-               machine_capture_candidate(machine, NULL) != ik_capture_prize) {
-        /* The alien moved out of the safe capture pose: stop the closing motion. */
+               machine->capture_target != ik_capture_prize) {
+        /* The machine stopped validating the requested prize during closure. */
         machine_open(machine);
         ik_capture_phase = IK_CAPTURE_IDLE;
         ik_capture_prize = -1;
@@ -194,22 +196,22 @@ static void update_ik_interaction_after_step(void) {
     if (ik_capture_phase != IK_CAPTURE_APPROACHING || !machine_at_target(machine))
         return;
 
-    Vec3 prize_position =
-        mat4_point(machine->prizes[ik_capture_prize].node->world, vec3(0, 0, 0));
-    if (v3_length(v3_sub(prize_position, machine->ik.target)) > .04f && ik_capture_retargets < 3) {
-        ++ik_capture_retargets;
-        machine_solve_ik(machine, prize_position, NULL);
+    if (machine_close_for_prize(machine, ik_capture_prize)) {
+        ik_capture_phase = IK_CAPTURE_CLOSING;
         return;
     }
-    if (machine_capture_candidate(machine, NULL) == ik_capture_prize) {
-        machine_close(machine);
-        ik_capture_phase = IK_CAPTURE_CLOSING;
-    } else {
-        ik_capture_phase = IK_CAPTURE_IDLE;
-        ik_capture_prize = -1;
-        ik_capture_retargets = 0;
-        app_message("Captura cancelada: garra fora da pose segura.");
+    if (ik_capture_retargets < 3) {
+        ++ik_capture_retargets;
+        if (!machine_solve_ik_capture(machine, ik_capture_prize, NULL, NULL)) {
+            cancel_ik_capture();
+            app_message("Captura cancelada: pose IK inalcançavel.");
+        }
+        return;
     }
+    ik_capture_phase = IK_CAPTURE_IDLE;
+    ik_capture_prize = -1;
+    ik_capture_retargets = 0;
+    app_message("Captura cancelada: garra fora da pose segura.");
 }
 static void toggle_pause(void) {
     ui.paused = !ui.paused;

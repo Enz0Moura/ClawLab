@@ -346,7 +346,53 @@ static void test_inverse_kinematics(void) {
         CHECK(m->arm.angles.target[joint] <= MACHINE_CONFIG.joints[joint].max);
     }
 
+    PrizeMachine *capture = machine_create_seeded(MODE_SANDBOX, 42);
+    CHECK(capture);
+    float position_error = INFINITY, orientation_error = INFINITY;
+    bool capture_solved =
+        machine_solve_ik_capture(capture, 0, &position_error, &orientation_error);
+    if (!capture_solved)
+        fprintf(stderr,
+                "capture IK: pos %.4f orient %.2f; current %.4f %.2f; route %d; valid %d\n",
+                position_error, orientation_error, capture->ik.error,
+                capture->ik.orientation_error, capture->ik.path_count,
+                machine_pose_valid(capture));
+    CHECK(capture_solved);
+    CHECK(position_error <= MACHINE_IK_POSITION_TOLERANCE);
+    CHECK(orientation_error <= MACHINE_IK_ORIENTATION_TOLERANCE);
+    CHECK(capture->ik.orientation_active);
+    CHECK(!machine_close_for_prize(capture, 1));
+    advance(capture, 15);
+    CHECK(capture->ik.error <= MACHINE_IK_POSITION_TOLERANCE);
+    CHECK(capture->ik.orientation_error <= MACHINE_IK_ORIENTATION_TOLERANCE);
+    CHECK(machine_capture_candidate(capture, NULL) == 0);
+    CHECK(machine_close_for_prize(capture, 0));
+    CHECK(capture->capture_target == 0);
+    advance(capture, 2);
+    CHECK(capture->held == 0);
+    CHECK(capture->capture_target == -1);
+
+    machine_destroy(capture);
     machine_destroy(reference);
+    machine_destroy(m);
+}
+static void test_arm_self_collision(void) {
+    PrizeMachine *m = machine_create_seeded(MODE_SANDBOX, 42);
+    CHECK(m);
+    for (int solid = 0; solid < m->solid_count; ++solid)
+        m->solids[solid].node->local = mat4_translate(vec3(100 + (float)solid * 2, 100, 100));
+    for (int prize = 0; prize < PRIZE_COUNT; ++prize)
+        m->prizes[prize].node->local =
+            mat4_translate(vec3(200 + (float)prize * 2, 200, 200));
+    scene_update(m->root, mat4_identity());
+    CHECK(machine_pose_valid(m));
+
+    /* Force a nonadjacent palm/upper-link overlap without moving the arm joints. */
+    Mat4 inverse_wrist;
+    CHECK(mat4_inverse(m->arm.joint[3]->world, &inverse_wrist));
+    m->arm.parts[2]->local = mat4_mul(inverse_wrist, m->arm.parts[0]->world);
+    scene_update(m->root, mat4_identity());
+    CHECK(!machine_pose_valid(m));
     machine_destroy(m);
 }
 static void test_occlusion_and_cargo(void) {
@@ -691,6 +737,7 @@ int main(void) {
     test_full_game();
     test_limits_collision_time();
     test_inverse_kinematics();
+    test_arm_self_collision();
     test_occlusion_and_cargo();
     test_difficulty_trays();
     test_modes_and_clock();
