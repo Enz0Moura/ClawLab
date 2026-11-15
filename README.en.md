@@ -20,14 +20,21 @@ make lib       # build/libcg.a, independent of the application
 make demo      # build build/library_demo
 make example   # run the standalone example
 make run       # build and run build/prize_machine
+make portable  # create a relocatable Linux package for the host architecture
 make test      # math, states, paths and allocation failures (~1 min)
 make sanitize  # the same tests with Clang, ASan and UBSan
 make smoke     # full automated graphical session; requires a display
 make clean     # remove build/
 ```
 
-`make` builds both executables. The simulator and example link against the same
-`build/libcg.a`. Choose a mode in the menu with the mouse or **1–4**.
+`make` builds both executables and creates
+`build/laclawlab-linux-<architecture>-portable.tar.gz`. The package includes
+FreeGLUT, required X11 libraries, and `run.sh` / `run-demo.sh` launchers. Extract
+it and run `./run.sh`. The target Linux system still needs compatible glibc, an
+X11 display, and an OpenGL driver; graphics drivers are not bundled. The
+simulator and example link against the same `build/libcg.a`.
+
+Choose a mode in the menu with the mouse or **1–4**.
 To play: click a prize; select a joint with **1–4**;
 use **←/→** or **+/−**; **C** closes, **O** opens, **H** shows help.
 Press **I** to make the claw follow the cursor; click an alien to start

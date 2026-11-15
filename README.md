@@ -20,14 +20,21 @@ make lib       # build/libcg.a, independente da aplicação
 make demo      # compila build/library_demo
 make example   # executa o exemplo independente
 make run       # compila e executa build/prize_machine
+make portable  # cria o pacote relocável para Linux na arquitetura do host
 make test      # matemática, estados, trajetórias e falhas de alocação (~1 min)
 make sanitize  # os mesmos testes com Clang, ASan e UBSan
 make smoke     # sessão gráfica automática completa; requer display
 make clean     # remove build/
 ```
 
-`make` compila os dois executáveis. O simulador e o exemplo vinculam o mesmo
-`build/libcg.a`. Escolha um modo no menu com o mouse ou **1–4**.
+`make` compila os dois executáveis e cria
+`build/laclawlab-linux-<arquitetura>-portable.tar.gz`. O pacote inclui FreeGLUT,
+as bibliotecas X11 necessárias e os lançadores `run.sh` e `run-demo.sh`. Extraia
+o arquivo e execute `./run.sh`. O Linux de destino ainda precisa de glibc
+compatível, display X11 e driver OpenGL; drivers gráficos não são incluídos no
+pacote. O simulador e o exemplo vinculam o mesmo `build/libcg.a`.
+
+Escolha um modo no menu com o mouse ou **1–4**.
 Para jogar: clique num prêmio; escolha a junta com **1–4**;
 use **←/→** ou **+/−**; **C** fecha, **O** abre, **H** mostra a ajuda.
 Pressione **I** para a garra seguir o cursor; clique em um alien para iniciar a

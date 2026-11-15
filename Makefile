@@ -1,6 +1,9 @@
 CC = cc
 AR = ar
 BUILD ?= build
+PORTABLE_ARCH := $(shell uname -m)
+PORTABLE_NAME := laclawlab-linux-$(PORTABLE_ARCH)-portable
+PORTABLE_ARCHIVE := $(BUILD)/$(PORTABLE_NAME).tar.gz
 CPPFLAGS += -Iinclude -Isrc
 CFLAGS ?= -O2 -g
 CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -MMD -MP
@@ -14,8 +17,9 @@ DEMO_OBJECT := $(BUILD)/examples/library_demo.o
 TEST_OBJECT := $(BUILD)/tests/test_all.o
 MACHINE_OBJECTS := $(BUILD)/src/app/config.o $(BUILD)/src/app/machine.o $(BUILD)/src/app/physics.o $(BUILD)/src/app/theme.o
 
-.PHONY: all lib demo run example test sanitize smoke clean
-all: $(BUILD)/prize_machine $(BUILD)/library_demo
+.PHONY: all portable lib demo run example test sanitize smoke clean
+all: $(BUILD)/prize_machine $(BUILD)/library_demo $(PORTABLE_ARCHIVE)
+portable: $(PORTABLE_ARCHIVE)
 lib: $(BUILD)/libcg.a
 demo: $(BUILD)/library_demo
 run: $(BUILD)/prize_machine
@@ -37,6 +41,8 @@ $(BUILD)/prize_machine: $(APP_OBJECTS) $(BUILD)/libcg.a
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 $(BUILD)/library_demo: $(DEMO_OBJECT) $(BUILD)/libcg.a
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+$(PORTABLE_ARCHIVE): $(BUILD)/prize_machine $(BUILD)/library_demo tools/make_portable_bundle.py
+	python3 tools/make_portable_bundle.py --build-dir $(BUILD) --arch $(PORTABLE_ARCH) --output $@
 $(BUILD)/test_all: $(TEST_OBJECT) $(MACHINE_OBJECTS) $(BUILD)/libcg.a
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 $(BUILD)/test_alloc: $(BUILD)/tests/test_alloc.o $(MACHINE_OBJECTS) $(BUILD)/libcg.a
