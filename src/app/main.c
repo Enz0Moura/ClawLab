@@ -57,6 +57,8 @@ static void choose_mode(GameMode mode) {
         fprintf(stderr, "Sem memoria para iniciar; partida anterior preservada.\n");
         return;
     }
+    ui.menu_selection = (int)mode;
+    ui.mode_select = false;
     ui.menu = ui.help = ui.paused = false;
     ui.ik_mode = false;
     clear_ik_interaction();
@@ -69,6 +71,8 @@ static void return_to_modes(void) {
         fprintf(stderr, "Sem memoria para voltar aos modos; partida pausada preservada.\n");
         return;
     }
+    ui.menu_selection = (int)machine->mode;
+    ui.mode_select = true;
     ui.menu = true;
     ui.help = ui.paused = false;
     ui.ik_mode = false;
@@ -259,10 +263,23 @@ static void key(unsigned char k, int x, int y) {
     (void)y;
     k = (unsigned char)tolower(k);
     if (ui.menu) {
-        if (k >= '1' && k <= '4')
+        if (ui.mode_select && k >= '1' && k <= '4')
             choose_mode((GameMode)(k - '1'));
-        else if (k == 27)
-            glutLeaveMainLoop();
+        else if (k == '\r' || k == '\n' || k == ' ') {
+            if (ui.mode_select)
+                choose_mode((GameMode)ui.menu_selection);
+            else if (ui.menu_selection == 0) {
+                ui.mode_select = true;
+                ui.menu_selection = 0;
+            } else
+                glutLeaveMainLoop();
+        } else if (k == 27) {
+            if (ui.mode_select) {
+                ui.mode_select = false;
+                ui.menu_selection = 0;
+            } else
+                glutLeaveMainLoop();
+        }
         glutPostRedisplay();
         return;
     }
@@ -352,7 +369,16 @@ static void key(unsigned char k, int x, int y) {
 static void special(int k, int x, int y) {
     (void)x;
     (void)y;
-    if (ui.menu || ui.paused)
+    if (ui.menu) {
+        if (k == GLUT_KEY_UP || k == GLUT_KEY_DOWN) {
+            int step = k == GLUT_KEY_UP ? -1 : 1;
+            int count = ui.mode_select ? MODE_COUNT : 2;
+            ui.menu_selection = (ui.menu_selection + step + count) % count;
+            glutPostRedisplay();
+        }
+        return;
+    }
+    if (ui.paused)
         return;
     if (k == GLUT_KEY_F1) {
         key('h', 0, 0);
@@ -380,9 +406,21 @@ static void special_up(int k, int x, int y) {
 }
 static void mouse(int button, int state, int x, int y) {
     if (ui.menu) {
-        int mode = ui_mode_at(&ui, x, y);
-        if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN && mode >= 0)
-            choose_mode((GameMode)mode);
+        if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN) {
+            if (ui.mode_select) {
+                int mode = ui_mode_at(&ui, x, y);
+                if (mode >= 0)
+                    choose_mode((GameMode)mode);
+            } else {
+                int item = ui_home_at(&ui, x, y);
+                if (item == 0) {
+                    ui.mode_select = true;
+                    ui.menu_selection = 0;
+                    glutPostRedisplay();
+                } else if (item == 1)
+                    glutLeaveMainLoop();
+            }
+        }
         return;
     }
     if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN && y >= 23 && y <= 57 &&
@@ -439,6 +477,14 @@ static void mouse(int button, int state, int x, int y) {
     }
 }
 static void passive_motion(int x, int y) {
+    if (ui.menu) {
+        int item = ui.mode_select ? ui_mode_at(&ui, x, y) : ui_home_at(&ui, x, y);
+        if (item >= 0 && item != ui.menu_selection) {
+            ui.menu_selection = item;
+            glutPostRedisplay();
+        }
+        return;
+    }
     set_cursor_ik_target(x, y);
 }
 static void motion(int x, int y) {
@@ -593,6 +639,11 @@ static void smoke_step(float dt) {
             key('c', 0, 0);
             if (machine->arm.opening_target != MACHINE_CONFIG.finger_max) {
                 quit_failure("menu input isolation");
+                return;
+            }
+            key('\r', 0, 0); /* Open Novo Jogo before selecting one of its modes. */
+            if (!ui.mode_select) {
+                quit_failure("new game opens mode selection");
                 return;
             }
             for (int i = 0; i < MODE_COUNT; ++i) {

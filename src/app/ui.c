@@ -6,9 +6,40 @@
 #include <stdio.h>
 #include <string.h>
 
-static const Color INK = {.028f, .035f, .105f}, PANEL = {.045f, .055f, .15f};
+static const Color INK = {.028f, .035f, .105f};
 static const Color TEXT = {1, .96f, .83f}, MUTED = {.57f, .65f, .83f};
 static const Color ACCENT = {.69f, .91f, .24f}, GOLD = {1, .81f, .18f};
+static const Color RETRO_PINK = {.96f, .23f, .69f}, RETRO_CYAN = {.22f, .79f, .79f};
+static const Color RETRO_PANEL = {.035f, .014f, .105f};
+static void retro_dots(float x, float y, float w, float h, int step, float size, Color a,
+                       Color b);
+static void retro_panel(float x, float y, float w, float h) {
+    if (w < 16 || h < 16)
+        return;
+    render_rect(x + 5, y + 5, w, h, (Color){.012f, .008f, .055f});
+    render_rect(x, y, w, h, RETRO_PANEL);
+    retro_dots(x + 7, y + 7, w - 14, h - 14, 14, 2, (Color){.085f, .021f, .17f},
+               (Color){.13f, .03f, .23f});
+    render_rect(x, y, w, 3, RETRO_PINK);
+    render_rect(x, y + h - 3, w, 3, RETRO_PINK);
+    render_rect(x, y, 3, h, RETRO_CYAN);
+    render_rect(x + w - 3, y, 3, h, RETRO_CYAN);
+}
+static void retro_bar(float x, float y, float w, float h) {
+    render_rect(x, y, w, h, RETRO_PANEL);
+    if (h > 14)
+        retro_dots(x + 6, y + 5, w - 12, h - 10, 14, 2, (Color){.075f, .019f, .15f},
+                   (Color){.12f, .027f, .21f});
+    render_rect(x, y, w, 3, RETRO_PINK);
+    render_rect(x, y + h - 3, w, 3, RETRO_CYAN);
+}
+static void retro_chip(float x, float y, float w, float h, Color accent) {
+    render_rect(x + 3, y + 3, w, h, (Color){.012f, .008f, .055f});
+    render_rect(x, y, w, h, RETRO_PANEL);
+    render_rect(x, y, w, 2, accent);
+    render_rect(x, y, 3, h, RETRO_CYAN);
+    render_rect(x + w - 2, y, 2, h, (Color){.30f, .13f, .39f});
+}
 
 static void ellipse(float x, float y, float rx, float ry, Color color) {
     glColor3f(color.r, color.g, color.b);
@@ -55,6 +86,23 @@ static void space_background(const UserInterface *ui) {
     glVertex2f(w, bottom);
     glVertex2f(0, bottom);
     glEnd();
+    retro_dots(8, top + 8, w - 16, (bottom - top) * .55f, 15, 2,
+               (Color){.075f, .06f, .20f}, (Color){.11f, .07f, .25f});
+    float horizon = top + (bottom - top) * .70f;
+    glLineWidth(1);
+    glColor3f(.24f, .055f, .22f);
+    glBegin(GL_LINES);
+    for (int i = 0; i <= 24; ++i) {
+        glVertex2f(w * .5f, horizon);
+        glVertex2f(w * (float)i / 24.0f, bottom);
+    }
+    for (int i = 1; i <= 8; ++i) {
+        float t = (float)i / 8.0f;
+        float y = horizon + (bottom - horizon) * t * t;
+        glVertex2f(0, y);
+        glVertex2f(w, y);
+    }
+    glEnd();
     for (int i = 0; i < 65; ++i) {
         float x = 18 + (float)((i * 137 + 31) % 947) / 947 * (w - 36);
         float y = top + 44 + (float)((i * 83 + 17) % 601) / 601 * (bottom - top - 68);
@@ -81,7 +129,13 @@ int ui_view_height(const UserInterface *ui) {
     return h > 1 ? h : 1;
 }
 static void button(float x, float y, float w, const char *label, bool accent) {
-    render_rect(x, y, w, 34, accent ? (Color){.67f, .075f, .12f} : (Color){.10f, .14f, .28f});
+    Color edge = accent ? RETRO_PINK : RETRO_CYAN;
+    render_rect(x + 3, y + 3, w, 34, (Color){.012f, .008f, .055f});
+    render_rect(x, y, w, 34, accent ? (Color){.22f, .035f, .20f} : RETRO_PANEL);
+    retro_dots(x + 5, y + 5, w - 10, 24, 12, 2, (Color){.09f, .025f, .17f},
+               (Color){.14f, .035f, .24f});
+    render_rect(x, y, w, 3, edge);
+    render_rect(x, y, 3, 34, accent ? GOLD : RETRO_CYAN);
     render_text(x + 12, y + 22, label, accent ? GOLD : TEXT, false);
 }
 static void draw_world(const UserInterface *ui, const PrizeMachine *m) {
@@ -151,7 +205,8 @@ static void labels(const UserInterface *ui, const PrizeMachine *m) {
             continue;
         char label[32];
         snprintf(label, sizeof(label), "%02d %s", i + 1, m->prizes[i].name);
-        render_rect(screen.x - 38, screen.y + UI_TOP - 16, 92, 22, INK);
+        retro_chip(screen.x - 38, screen.y + UI_TOP - 16, 92, 22,
+                   m->selected == i ? RETRO_PINK : RETRO_CYAN);
         render_text(screen.x - 32, screen.y + UI_TOP, label,
                     m->selected == i ? ACCENT : MACHINE_CONFIG.prize_colors[i], false);
     }
@@ -160,15 +215,14 @@ static void labels(const UserInterface *ui, const PrizeMachine *m) {
     Vec3 label = vec3((tray.min.x + tray.max.x) * .5f, tray.max.y + .04f, tray.max.z - .1f);
     if (camera_project(&ui->camera, label, ui_view_width(ui), ui_view_height(ui), &screen) &&
         screen.x > 50 && screen.x < ui_view_width(ui) - 60 && screen.y < ui_view_height(ui) - 12) {
-        render_rect(screen.x - 44, screen.y + UI_TOP - 15, 90, 22, INK);
+        retro_chip(screen.x - 44, screen.y + UI_TOP - 15, 90, 22, RETRO_CYAN);
         render_text(screen.x - 38, screen.y + UI_TOP, "ENTREGA", ACCENT, false);
     }
 }
 static void panel(const UserInterface *ui, const PrizeMachine *m) {
     float x = (float)ui_view_width(ui), left = x + 22;
     char text[128];
-    render_rect(x, UI_TOP, UI_PANEL_WIDTH, (float)(ui->height - UI_TOP - UI_BOTTOM), PANEL);
-    render_rect(x, UI_TOP, 1, (float)(ui->height - UI_TOP - UI_BOTTOM), (Color){.15f, .21f, .27f});
+    retro_panel(x, UI_TOP, UI_PANEL_WIDTH, (float)(ui->height - UI_TOP - UI_BOTTOM));
     float scale = panel_scale(ui);
     glPushMatrix();
     glTranslatef(0, UI_TOP * (1 - scale), 0);
@@ -179,13 +233,20 @@ static void panel(const UserInterface *ui, const PrizeMachine *m) {
     for (int i = 0; i < PRIZE_COUNT; ++i) {
         float y = 155 + (float)i * 31;
         if (m->selected == i)
-            render_rect(left - 7, y - 1, 278, 28, (Color){.10f, .19f, .23f});
+            render_rect(left - 7, y - 1, 278, 28, RETRO_PINK);
+        else
+            render_rect(left - 7, y - 1, 278, 28, (Color){.045f, .018f, .115f});
+        if (m->selected == i)
+            render_rect(left - 7, y - 1, 4, 28, GOLD);
         alien_icon(left + 8, y + 11, 8);
-        render_text(left + 30, y + 15, m->prizes[i].name, MACHINE_CONFIG.prize_colors[i], false);
+        render_text(left + 30, y + 15, m->prizes[i].name,
+                    m->selected == i ? TEXT : MACHINE_CONFIG.prize_colors[i], false);
         render_text(left + 139, y + 15, prize_state_name(m->prizes[i].state),
-                    m->prizes[i].state == PRIZE_DELIVERED ? ACCENT : MUTED, false);
+                    m->selected == i ? TEXT
+                                     : (m->prizes[i].state == PRIZE_DELIVERED ? ACCENT : MUTED),
+                    false);
     }
-    render_rect(left, 262, 272, 1, (Color){.15f, .21f, .27f});
+    render_rect(left, 262, 272, 2, RETRO_PINK);
     render_text(left, 287, ui->ik_mode ? "IK ATIVO   /   CURSOR + CAPTURA"
                                        : "JUNTAS   /   CONTROLE FK 1 a 4",
                 ui->ik_mode ? ACCENT : MUTED, false);
@@ -193,26 +254,27 @@ static void panel(const UserInterface *ui, const PrizeMachine *m) {
         float y = 300 + (float)i * 57;
         bool active = ui->active_joint == i;
         render_rect(left - 6, y, 282, 51,
-                    active ? (Color){.10f, .21f, .25f} : (Color){.07f, .10f, .14f});
+                    active ? (Color){.30f, .035f, .23f} : (Color){.045f, .018f, .115f});
         if (active)
-            render_rect(left - 6, y, 3, 51, ACCENT);
+            render_rect(left - 6, y, 4, 51, GOLD);
+        render_rect(left - 6, y, 282, 2, active ? RETRO_PINK : (Color){.22f, .08f, .31f});
         snprintf(text, sizeof(text), "%d  %s", i + 1, MACHINE_CONFIG.joints[i].name);
-        render_text(left + 6, y + 18, text, active ? ACCENT : TEXT, false);
+        render_text(left + 6, y + 18, text, active ? GOLD : TEXT, false);
         snprintf(text, sizeof(text), "[%g, %g]", (double)MACHINE_CONFIG.joints[i].min,
                  (double)MACHINE_CONFIG.joints[i].max);
         render_text(left + 6, y + 39, text, MUTED, false);
         snprintf(text, sizeof(text), "%6.1f", (double)m->arm.angles.current[i]);
         render_text(left + 112, y + 30, text, TEXT, true);
-        render_rect(left + 199, y + 9, 31, 32, (Color){.14f, .22f, .28f});
+        retro_chip(left + 199, y + 9, 31, 32, RETRO_CYAN);
         render_text(left + 210, y + 30, "-", TEXT, true);
-        render_rect(left + 238, y + 9, 31, 32, (Color){.14f, .22f, .28f});
+        retro_chip(left + 238, y + 9, 31, 32, RETRO_PINK);
         render_text(left + 248, y + 30, "+", TEXT, true);
     }
     render_text(left, 553, "GARRA", MUTED, false);
     snprintf(text, sizeof(text), "%4.1f / 40 graus", (double)m->arm.opening);
     render_text(left + 139, 553, text, TEXT, false);
-    render_rect(left, 565, 270, 4, (Color){.14f, .20f, .26f});
-    render_rect(left, 565, 270 * m->arm.opening / 40, 4, ACCENT);
+    render_rect(left, 565, 270, 5, (Color){.055f, .025f, .13f});
+    render_rect(left, 565, 270 * m->arm.opening / 40, 5, RETRO_PINK);
     const char *status = m->delivered == PRIZE_COUNT               ? "Colecao completa!"
                          : m->held >= 0                            ? "Garra ocupada"
                          : machine_capture_candidate(m, NULL) >= 0 ? "Captura possivel"
@@ -232,7 +294,9 @@ static void panel(const UserInterface *ui, const PrizeMachine *m) {
                            ? ACCENT
                            : GOLD;
     }
-    render_text(left, 593, status, status_color, false);
+    Color status_edge = status_color.g > .8f && status_color.r < .9f ? RETRO_CYAN : RETRO_PINK;
+    retro_chip(left - 4, 576, 278, 25, status_edge);
+    render_text(left + 5, 593, status, status_color, false);
     button(left, 610, 130, "C  FECHAR", true);
     button(left + 140, 610, 130, "O  ABRIR", false);
     render_text(left, 668, "Setas: junta  |  +/-: 5 graus  |  [ ]: 1 grau", MUTED, false);
@@ -245,9 +309,8 @@ static void panel(const UserInterface *ui, const PrizeMachine *m) {
 }
 static void help(const UserInterface *ui) {
     float x = 32, y = 166, w = (float)ui_view_width(ui) - 64;
-    render_rect(x, y, w, 450, (Color){.045f, .075f, .11f});
-    render_rect(x, y, 4, 450, ACCENT);
-    render_text(x + 24, y + 37, "COMO JOGAR", ACCENT, true);
+    retro_panel(x, y, w, 450);
+    render_text(x + 24, y + 37, "COMO JOGAR", RETRO_CYAN, true);
     const char *lines[] = {"1. Clique em um premio para destaca-lo.",
                            "2. Escolha a junta com 1, 2, 3 ou 4.",
                            "3. Use as setas esquerda/direita para mover.",
@@ -269,18 +332,58 @@ static void help(const UserInterface *ui) {
         render_text(x + 24, y + 72 + (float)i * 24, lines[i], i + 1 == count ? ACCENT : TEXT,
                     false);
 }
+static bool menu_columns(const UserInterface *ui) {
+    return ui->width >= 960;
+}
 UIRect ui_mode_rect(const UserInterface *ui, int mode) {
-    float w = fminf(660, (float)ui->width - 48);
-    float h = fminf(76, ((float)ui->height - 230) / 4);
-    return (UIRect){((float)ui->width - w) * .5f, 178 + (float)mode * (h + 12), w, h};
+    float width = (float)ui->width;
+    float height = (float)ui->height;
+    if (menu_columns(ui)) {
+        float frame_w = fminf(1120, width - 48);
+        float frame_x = (width - frame_w) * .5f;
+        float art_w = fminf(350, frame_w * .34f);
+        float art_x = frame_x + frame_w - art_w - 18;
+        float list_x = frame_x + 18;
+        float x = list_x + 22;
+        float w = art_x - list_x - 62;
+        float h = cg_clamp((height - 400) / 4, 48, 62);
+        return (UIRect){x, 250 + (float)mode * (h + 12), w, h};
+    }
+    float w = fmaxf(1, width - 48);
+    float h = cg_clamp((height - 350) / 4, 40, 66);
+    return (UIRect){24, 262 + (float)mode * (h + 10), w, h};
 }
 int ui_mode_at(const UserInterface *ui, int x, int y) {
-    if (!ui->menu)
+    if (!ui->menu || !ui->mode_select)
         return -1;
     for (int i = 0; i < MODE_COUNT; ++i) {
         UIRect r = ui_mode_rect(ui, i);
         if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h)
             return i;
+    }
+    return -1;
+}
+UIRect ui_home_rect(const UserInterface *ui, int item) {
+    if (menu_columns(ui)) {
+        float width = (float)ui->width;
+        float frame_w = fminf(1120, width - 48);
+        float frame_x = (width - frame_w) * .5f;
+        float art_w = fminf(350, frame_w * .34f);
+        float art_x = frame_x + frame_w - art_w - 18;
+        float list_x = frame_x + 40;
+        float x = list_x;
+        float w = art_x - frame_x - 80;
+        return (UIRect){x, 300 + (float)item * 100, w, 70};
+    }
+    return (UIRect){24, 284 + (float)item * 88, fmaxf(1, (float)ui->width - 48), 64};
+}
+int ui_home_at(const UserInterface *ui, int x, int y) {
+    if (!ui->menu || ui->mode_select)
+        return -1;
+    for (int item = 0; item < 2; ++item) {
+        UIRect r = ui_home_rect(ui, item);
+        if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h)
+            return item;
     }
     return -1;
 }
@@ -303,9 +406,8 @@ unsigned char ui_pause_at(const UserInterface *ui, int x, int y) {
 static void pause_menu(const UserInterface *ui, const PrizeMachine *m) {
     UIRect first = ui_pause_rect(ui, 0);
     float x = first.x - 24, y = first.y - 112;
-    render_rect(x, y, first.w + 48, 330, PANEL);
-    render_rect(x, y, 4, 330, GOLD);
-    render_text(first.x, y + 39, "PARTIDA PAUSADA", GOLD, true);
+    retro_panel(x, y, first.w + 48, 330);
+    render_text(first.x, y + 39, "PARTIDA PAUSADA", RETRO_PINK, true);
     char text[96];
     if (m->mode == MODE_SANDBOX)
         snprintf(text, sizeof(text), "Sandbox / %d de 3 aliens / sem limite de tempo",
@@ -326,40 +428,285 @@ static void pause_menu(const UserInterface *ui, const PrizeMachine *m) {
     render_text(first.x, y + 290, "Resetar comeca novamente no mesmo modo.", MUTED, false);
     render_text(first.x, y + 312, "Voltar aos modos encerra a partida atual.", MUTED, false);
 }
-static void menu(const UserInterface *ui) {
-    UserInterface background = *ui;
-    background.width += UI_PANEL_WIDTH;
-    space_background(&background);
-    UIRect first = ui_mode_rect(ui, 0);
-    render_text(first.x, 112, "ESCOLHA SUA MISSAO", GOLD, true);
-    render_text(first.x, 143, "Resgate os 3 aliens. Clique em um modo ou pressione 1-4.", TEXT,
+static void retro_dots(float x, float y, float w, float h, int step, float size, Color a,
+                       Color b) {
+    glBegin(GL_QUADS);
+    int row = 0;
+    for (float py = y; py < y + h; py += (float)step, ++row) {
+        int column = 0;
+        for (float px = x; px < x + w; px += (float)step, ++column) {
+            Color color = (row + column) % 5 == 0 ? b : a;
+            glColor3f(color.r, color.g, color.b);
+            glVertex2f(px, py);
+            glVertex2f(px + size, py);
+            glVertex2f(px + size, py + size);
+            glVertex2f(px, py + size);
+        }
+    }
+    glEnd();
+}
+static void menu_background(const UserInterface *ui) {
+    static const Color night = {.035f, .018f, .12f};
+    float width = (float)ui->width, height = (float)ui->height;
+    float horizon = height * .68f;
+    render_rect(0, 0, width, height, night);
+    render_rect(0, 0, width, horizon, (Color){.055f, .018f, .16f});
+    render_rect(0, horizon, width, height - horizon, (Color){.12f, .025f, .24f});
+    retro_dots(8, 32, width - 16, horizon - 42, 10, 3, (Color){.13f, .035f, .28f},
+               (Color){.22f, .055f, .36f});
+    for (int i = 0; i < 65; ++i) {
+        float x = 18 + (float)((i * 137 + 31) % 947) / 947 * (width - 36);
+        float y = 28 + (float)((i * 83 + 17) % 601) / 601 * (height - 56);
+        float size = i % 9 == 0 ? 3 : 2;
+        Color star = i % 9 == 0 ? GOLD : (Color){.25f, .30f, .53f};
+        render_rect(x, y, size, size, star);
+        if (i % 9 == 0) {
+            render_rect(x - 3, y + 1, 9, 1, star);
+            render_rect(x + 1, y - 3, 1, 9, star);
+        }
+    }
+    /* Perspective grid floor below the neon horizon. */
+    glColor3f(.91f, .10f, .52f);
+    glLineWidth(1.5f);
+    glBegin(GL_LINES);
+    for (int i = 0; i <= 28; ++i) {
+        float end_x = width * (float)i / 28.0f;
+        glVertex2f(width * .5f, horizon);
+        glVertex2f(end_x, height - 22);
+    }
+    for (int i = 1; i <= 12; ++i) {
+        float t = (float)i / 12.0f;
+        float y = horizon + (height - 22 - horizon) * t * t;
+        glColor3f(.55f + .32f * t, .07f, .38f + .22f * t);
+        glVertex2f(0, y);
+        glVertex2f(width, y);
+    }
+    glEnd();
+    glLineWidth(1);
+    render_rect(0, horizon - 2, width, 4, (Color){.98f, .12f, .56f});
+
+    /* Keep a clean edge around the retrowave sky and perspective floor. */
+    for (int y = 28; y < ui->height - 28; y += 6)
+        render_rect(0, (float)y, width, 1, (Color){.035f, .02f, .105f});
+}
+static void claw_screen_background(float x, float y, float w, float h, bool framed) {
+    if (framed) {
+        render_rect(x, y, w, h, (Color){.045f, .08f, .17f});
+        render_rect(x, y, w, 3, (Color){.22f, .79f, .79f});
+        render_rect(x, y + h - 3, w, 3, (Color){.22f, .79f, .79f});
+        render_rect(x, y, 3, h, (Color){.22f, .79f, .79f});
+        render_rect(x + w - 3, y, 3, h, (Color){.22f, .79f, .79f});
+    } else {
+        render_rect(x, y, w, h, (Color){.045f, .08f, .17f});
+        render_rect(x, y, w, 2, (Color){.22f, .79f, .79f});
+        render_rect(x, y + h - 2, w, 2, (Color){.22f, .79f, .79f});
+    }
+    for (float scan = y + 8; scan < y + h - 6; scan += 8)
+        render_rect(x + 5, scan, w - 10, 1, (Color){.065f, .095f, .18f});
+
+}
+static void claw_cabinet(float x, float y, float w, float h) {
+    render_rect(x + 5, y + 5, w, h, (Color){.015f, .018f, .07f});
+    render_rect(x, y, w, h, (Color){.12f, .11f, .26f});
+    render_rect(x, y, w, 5, (Color){.99f, .31f, .23f});
+    render_rect(x, y + 5, 5, h - 10, (Color){.22f, .79f, .79f});
+    render_rect(x + w - 5, y + 5, 5, h - 10, (Color){.22f, .79f, .79f});
+    render_text(x + 16, y + 27, "RESGATE ESPACIAL", GOLD, true);
+    claw_screen_background(x + 14, y + 39, w - 28, h - 94, true);
+    render_rect(x + 14, y + h - 44, w - 28, 27, (Color){.07f, .075f, .17f});
+    render_text(x + 22, y + h - 25, "3 ALIENS  /  1 GARRA", (Color){.22f, .84f, .83f},
                 false);
+}
+static UIRect menu_preview_rect(const UserInterface *ui) {
+    if (menu_columns(ui)) {
+        float frame_w = fminf(1120, (float)ui->width - 48);
+        float frame_x = ((float)ui->width - frame_w) * .5f;
+        float art_w = fminf(350, frame_w * .34f);
+        float art_x = frame_x + frame_w - art_w - 18;
+        float art_h = fmaxf(160, fminf(448, (float)ui->height - 225));
+        return (UIRect){art_x + 17, 208, art_w - 34, art_h - 100};
+    }
+    float art_w = (float)ui->width - 48;
+    float view_w = fminf(280, art_w - 24);
+    if (view_w < 1)
+        view_w = art_w;
+    return (UIRect){24 + (art_w - view_w) * .5f, 114, view_w, 112};
+}
+static void menu_orbit_trails(Vec3 grip) {
+    glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT | GL_LINE_BIT | GL_COLOR_BUFFER_BIT |
+                 GL_DEPTH_BUFFER_BIT);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glDepthMask(GL_FALSE);
+    glLineWidth(1.5f);
+    const Color cyan = {.17f, .83f, .91f};
+    const Color pink = {.94f, .20f, .72f};
+    for (int ring = 0; ring < 2; ++ring) {
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < 72; ++i) {
+            float a = cg_radians((float)i * 5);
+            float radius_x = ring == 0 ? .72f : .92f;
+            float radius_y = ring == 0 ? .58f : .43f;
+            float radius_z = ring == 0 ? .10f : .28f;
+            glColor4f(ring == 0 ? cyan.r : pink.r, ring == 0 ? cyan.g : pink.g,
+                      ring == 0 ? cyan.b : pink.b, ring == 0 ? .58f : .38f);
+            glVertex3f(grip.x + radius_x * cosf(a), grip.y + radius_y * sinf(a),
+                       grip.z + radius_z * sinf(a));
+        }
+        glEnd();
+    }
+    glPopAttrib();
+}
+static void draw_menu_preview(const UserInterface *ui, const PrizeMachine *m) {
+    if (!m)
+        return;
+    UIRect view = menu_preview_rect(ui);
+    int width = (int)view.w, height = (int)view.h;
+    if (width <= 0 || height <= 0)
+        return;
+    int x = (int)view.x;
+    int y = ui->height - (int)(view.y + view.h);
+    float time = (float)glutGet(GLUT_ELAPSED_TIME) * .001f;
+    float yaw = 28.0f + time * 7.0f;
+    bool wide = menu_columns(ui);
+    Vec3 grip = machine_grip_position(m);
+    Camera preview = {vec3(grip.x, grip.y + (wide ? -.35f : -.62f), grip.z), yaw, 14,
+                      wide ? 4.8f : 2.65f, 42, .08f, 30};
+
+    render_camera(&preview, x, y, width, height);
+    menu_orbit_trails(grip);
+    if (wide) {
+        /* Reuse the same forearm, palm, fingers, and wrist joint drawn in play. */
+        static const int end_effector[] = {1, 2, 3, 4, 7};
+        for (size_t i = 0; i < sizeof(end_effector) / sizeof(end_effector[0]); ++i)
+            scene_draw(m->arm.parts[end_effector[i]]);
+    } else {
+        static const int end_effector[] = {2, 3, 4, 7};
+        for (size_t i = 0; i < sizeof(end_effector) / sizeof(end_effector[0]); ++i)
+            scene_draw(m->arm.parts[end_effector[i]]);
+    }
+    /* Stage the game's actual alien meshes below the gripper for the preview. */
+    for (int i = 0; i < PRIZE_COUNT; ++i) {
+        glPushMatrix();
+        glTranslatef(grip.x + ((float)i - 1.0f) * .64f, grip.y - 1.08f, grip.z + .20f);
+        glRotatef((float)(i - 1) * 12.0f, 0, 1, 0);
+        m->prizes[i].node->geometry->draw(m->prizes[i].node->geometry);
+        glPopMatrix();
+    }
+}
+static void menu_preview_frame(const UserInterface *ui) {
+    UIRect r = menu_preview_rect(ui);
+    Color cyan = {.22f, .79f, .79f};
+    Color pink = {.96f, .23f, .69f};
+    render_rect(r.x - 2, r.y - 2, r.w + 4, 2, cyan);
+    render_rect(r.x - 2, r.y + r.h, r.w + 4, 2, cyan);
+    render_rect(r.x - 2, r.y - 2, 2, r.h + 4, pink);
+    render_rect(r.x + r.w, r.y - 2, 2, r.h + 4, pink);
+}
+static void menu(const UserInterface *ui) {
+    static const Color frame = {.98f, .31f, .23f};
+    static const Color cyan = {.22f, .79f, .79f};
+    static const Color mode_colors[] = {
+        {.69f, .91f, .24f}, {.24f, .80f, .74f}, {1, .81f, .18f}, {1, .32f, .30f}};
     const char *descriptions[] = {
         "Sem limite. Bandeja ampla; pouca variacao; quiques suaves.",
         "4 min. Bandeja menor; pouca variacao; quiques leves.",
         "3 min. Bandeja reduzida; distancias variadas; quiques moderados.",
         "2 min. Menor bandeja; maior variacao; quiques fortes."};
-    const Color colors[] = {
-        {.69f, .91f, .24f}, {.24f, .80f, .74f}, {1, .81f, .18f}, {1, .32f, .30f}};
-    for (int i = 0; i < MODE_COUNT; ++i) {
-        UIRect r = ui_mode_rect(ui, i);
-        render_rect(r.x, r.y, r.w, r.h, PANEL);
-        render_rect(r.x, r.y, 4, r.h, colors[i]);
-        char title[48];
-        snprintf(title, sizeof(title), "%d  %s", i + 1, GAME_MODES[i].name);
-        render_text(r.x + 22, r.y + 29, title, colors[i], true);
-        render_text(r.x + 22, r.y + r.h - 16, descriptions[i], TEXT, false);
+    menu_background(ui);
+    UIRect first = ui_mode_rect(ui, 0);
+
+    if (menu_columns(ui)) {
+        float frame_w = fminf(1120, (float)ui->width - 48);
+        float frame_x = ((float)ui->width - frame_w) * .5f;
+        float art_w = fminf(350, frame_w * .34f);
+        float art_x = frame_x + frame_w - art_w - 18;
+        float list_x = frame_x + 18;
+        float list_w = art_x - list_x - 28;
+        float list_h = fminf(402, (float)ui->height - 230);
+        Color pink = {.96f, .23f, .69f};
+        render_rect(frame_x, 39, frame_w, 3, frame);
+        render_rect(frame_x, 42, frame_w, 1, (Color){.30f, .19f, .34f});
+        render_text(frame_x + 4, 79, "A GARRA!", GOLD, true);
+        render_text(frame_x + 134, 78, "RESGATE ESPACIAL  /  EDICAO ARCADE", cyan, false);
+        render_text(frame_x + frame_w - 228, 78, "SETAS + ENTER  /  1-4", TEXT, false);
+        claw_cabinet(art_x, 166, art_w, fminf(448, (float)ui->height - 225));
+        render_rect(list_x + 8, 198, list_w, list_h, (Color){.012f, .008f, .055f});
+        render_rect(list_x, 190, list_w, list_h, (Color){.045f, .018f, .12f});
+        retro_dots(list_x + 8, 199, list_w - 16, list_h - 18, 12, 3,
+                   (Color){.105f, .025f, .21f}, (Color){.16f, .035f, .29f});
+        render_rect(list_x, 190, list_w, 3, pink);
+        render_rect(list_x, 190, 3, list_h, cyan);
+        render_rect(list_x + list_w - 3, 190, 3, list_h, cyan);
+        render_rect(list_x, 190 + list_h - 3, list_w, 3, pink);
+        render_rect(list_x + 8, 199, list_w - 16, 1, (Color){.41f, .13f, .43f});
+        render_text(list_x + 24, 229, ui->mode_select ? "ESCOLHA A MISSAO" : "MENU PRINCIPAL",
+                    GOLD, true);
+        render_text(list_x + 24, 245,
+                    ui->mode_select ? "RESGATE OS 3 ALIENS / USE AS SETAS"
+                                    : "NOVO JOGO / SETAS + ENTER",
+                    MUTED, false);
+    } else {
+        float art_y = 112;
+        float art_h = 116;
+        float art_x = 24;
+        float art_w = (float)ui->width - 48;
+        render_rect(24, 38, (float)ui->width - 48, 3, frame);
+        render_text(25, 76, "A GARRA!", GOLD, true);
+        render_text(154, 75, "RESGATE ESPACIAL  /  EDICAO ARCADE", cyan, false);
+        claw_screen_background(art_x, art_y, art_w, art_h, false);
+        render_text(first.x, 249, ui->mode_select ? "ESCOLHA SUA MISSAO" : "MENU PRINCIPAL",
+                    GOLD, true);
     }
-    UIRect last = ui_mode_rect(ui, MODE_COUNT - 1);
-    render_text(first.x, last.y + last.h + 36,
-                "Nova partida e reset sorteiam as posicoes. Esc: sair.", MUTED, false);
+
+    int item_count = ui->mode_select ? MODE_COUNT : 2;
+    for (int i = 0; i < item_count; ++i) {
+        UIRect r = ui->mode_select ? ui_mode_rect(ui, i) : ui_home_rect(ui, i);
+        Color accent = ui->mode_select ? mode_colors[i] : cyan;
+        bool selected = i == ui->menu_selection;
+        if (selected) {
+            Color pink = {.96f, .23f, .69f};
+            render_rect(r.x - 11, r.y + 4, r.w + 15, r.h, (Color){.012f, .018f, .055f});
+            render_rect(r.x - 14, r.y, r.w + 15, r.h, pink);
+            render_rect(r.x - 14, r.y, 4, r.h, GOLD);
+            /* Blocky yellow pointer, echoing the selector in the reference. */
+            render_rect(r.x + 2, r.y + r.h * .5f - 8, 7, 16, GOLD);
+            render_rect(r.x + 9, r.y + r.h * .5f - 4, 6, 8, GOLD);
+        }
+        char title[48];
+        if (ui->mode_select)
+            snprintf(title, sizeof(title), "%d  %s", i + 1, GAME_MODES[i].name);
+        else
+            snprintf(title, sizeof(title), "%s", i == 0 ? "NOVO JOGO" : "SAIR");
+        render_text(r.x + 28, r.y + 25, title, selected ? TEXT : accent, true);
+        if (ui->mode_select) {
+            if (r.h >= 58)
+                render_text(r.x + 28, r.y + r.h - 10, descriptions[i],
+                            selected ? (Color){1, .82f, .90f} : MUTED, false);
+            else
+                render_text(r.x + 28, r.y + r.h - 8, "PRESSIONE A TECLA INDICADA",
+                            selected ? TEXT : MUTED, false);
+        } else {
+            const char *description = i == 0 ? "Escolha um modo e comece o resgate."
+                                             : "Fechar o jogo.";
+            render_text(r.x + 28, r.y + r.h - 12, description,
+                        selected ? (Color){1, .82f, .90f} : MUTED, false);
+        }
+    }
+    float footer_y = (float)ui->height - 40;
+    render_text(26, footer_y,
+                ui->mode_select ? "ENTER OU CLIQUE: INICIAR  /  ESC: VOLTAR AO MENU"
+                                : "ENTER OU CLIQUE: NOVO JOGO  /  ESC: SAIR",
+                MUTED, false);
 }
+
 static void round_result(const UserInterface *ui, const PrizeMachine *m) {
     float w = fminf(640, (float)ui_view_width(ui) - 40);
     float x = ((float)ui_view_width(ui) - w) * .5f, y = (float)ui->height * .43f;
-    render_rect(x, y, w, 145, PANEL);
-    render_rect(x, y, 4, 145, m->round == ROUND_WON ? ACCENT : GOLD);
-    render_text(x + 24, y + 38, m->round == ROUND_WON ? "MISSAO CUMPRIDA!" : "TEMPO ESGOTADO", GOLD,
+    retro_panel(x, y, w, 145);
+    render_text(x + 24, y + 38, m->round == ROUND_WON ? "MISSAO CUMPRIDA!" : "TEMPO ESGOTADO",
+                m->round == ROUND_WON ? RETRO_CYAN : RETRO_PINK,
                 true);
     char text[80];
     snprintf(text, sizeof(text), "%d de 3 aliens resgatados / %s", m->delivered,
@@ -373,6 +720,10 @@ void ui_draw(const UserInterface *ui, const PrizeMachine *m) {
         render_overlay_begin(ui->width, ui->height);
         menu(ui);
         render_overlay_end();
+        draw_menu_preview(ui, m);
+        render_overlay_begin(ui->width, ui->height);
+        menu_preview_frame(ui);
+        render_overlay_end();
         return;
     }
     render_overlay_begin(ui->width, ui->height);
@@ -381,11 +732,10 @@ void ui_draw(const UserInterface *ui, const PrizeMachine *m) {
     draw_world(ui, m);
     render_overlay_begin(ui->width, ui->height);
     labels(ui, m);
-    render_rect(0, 0, (float)ui->width, UI_TOP, INK);
+    retro_bar(0, 0, (float)ui->width, UI_TOP);
     planet_icon(43, 37, 15);
     render_text(76, 36, "PIZZA PLANET", TEXT, true);
     render_text(76, 56, "A GARRA!   /   LACLAW LAB", GOLD, false);
-    render_rect(0, UI_TOP - 3, (float)ui->width, 3, (Color){.82f, .08f, .13f});
     char clock[80];
     if (GAME_MODES[m->mode].time_limit > 0) {
         int seconds = (int)ceilf(m->time_remaining);
@@ -393,6 +743,8 @@ void ui_draw(const UserInterface *ui, const PrizeMachine *m) {
                  seconds % 60);
     } else
         snprintf(clock, sizeof(clock), "SANDBOX / SEM TEMPO LIMITE");
+    retro_chip((float)ui->width - 500, 23, 300, 31,
+               m->mode != MODE_SANDBOX && m->time_remaining < 30 ? RETRO_PINK : GOLD);
     render_text((float)ui->width - 480, 43, clock,
                 m->mode != MODE_SANDBOX && m->time_remaining < 30 ? (Color){1, .32f, .30f} : GOLD,
                 false);
@@ -400,7 +752,10 @@ void ui_draw(const UserInterface *ui, const PrizeMachine *m) {
     render_text(25, 105, ui->debug ? "DEPURACAO  /  D para ocultar" : "RESGATE A TRIPULACAO!",
                 ui->debug ? (Color){1, .6f, .2f} : MUTED, false);
     panel(ui, m);
-    render_rect(0, (float)ui->height - UI_BOTTOM, (float)ui_view_width(ui), UI_BOTTOM, INK);
+    float footer_y = (float)ui->height - UI_BOTTOM;
+    retro_bar(0, footer_y, (float)ui_view_width(ui), UI_BOTTOM);
+    retro_chip(18, footer_y + 9, (float)ui_view_width(ui) - 36, 52,
+               ui->ik_mode ? RETRO_CYAN : RETRO_PINK);
     char ik_status[128];
     const char *status;
     if (m->message_time > 0)
@@ -435,7 +790,7 @@ void ui_draw(const UserInterface *ui, const PrizeMachine *m) {
         char text[120];
         snprintf(text, sizeof(text), "Garra: (%.3f, %.3f, %.3f)  |  movimentos rejeitados: %u",
                  (double)p.x, (double)p.y, (double)p.z, m->blocked_moves);
-        render_rect(20, 117, (float)ui_view_width(ui) - 40, 29, INK);
+        retro_chip(20, 117, (float)ui_view_width(ui) - 40, 29, GOLD);
         render_text(28, 136, text, (Color){1, .7f, .3f}, false);
     }
     if (m->round != ROUND_PLAYING)
