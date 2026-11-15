@@ -104,7 +104,10 @@ static void draw_world(const UserInterface *ui, const PrizeMachine *m) {
     if (ui->ik_mode && m->ik.target_active) {
         Vec3 p = m->ik.target;
         float r = .12f;
-        Color target_color = m->ik.error <= .05f ? ACCENT : GOLD;
+        bool ik_reached = m->ik.error <= MACHINE_IK_POSITION_TOLERANCE &&
+                          (!m->ik.orientation_active ||
+                           m->ik.orientation_error <= MACHINE_IK_ORIENTATION_TOLERANCE);
+        Color target_color = ik_reached ? ACCENT : GOLD;
         render_line(vec3(p.x - r, p.y, p.z), vec3(p.x + r, p.y, p.z), target_color);
         render_line(vec3(p.x, p.y - r, p.z), vec3(p.x, p.y + r, p.z), target_color);
         render_line(vec3(p.x, p.y, p.z - r), vec3(p.x, p.y, p.z + r), target_color);
@@ -217,9 +220,17 @@ static void panel(const UserInterface *ui, const PrizeMachine *m) {
     Color status_color =
         m->held >= 0 || machine_capture_candidate(m, NULL) >= 0 ? ACCENT : MUTED;
     if (ui->ik_mode && m->ik.target_active) {
-        snprintf(text, sizeof(text), "Erro IK: %.3f", (double)m->ik.error);
+        if (m->ik.orientation_active)
+            snprintf(text, sizeof(text), "IK: %.3f m / %.1f deg", (double)m->ik.error,
+                     (double)m->ik.orientation_error);
+        else
+            snprintf(text, sizeof(text), "Erro IK: %.3f", (double)m->ik.error);
         status = text;
-        status_color = m->ik.error <= .05f ? ACCENT : GOLD;
+        status_color = m->ik.error <= MACHINE_IK_POSITION_TOLERANCE &&
+                               (!m->ik.orientation_active ||
+                                m->ik.orientation_error <= MACHINE_IK_ORIENTATION_TOLERANCE)
+                           ? ACCENT
+                           : GOLD;
     }
     render_text(left, 593, status, status_color, false);
     button(left, 610, 130, "C  FECHAR", true);
@@ -401,8 +412,12 @@ void ui_draw(const UserInterface *ui, const PrizeMachine *m) {
     else if (machine_capture_candidate(m, NULL) >= 0)
         status = "Captura possivel. Pressione C para fechar.";
     else if (ui->ik_mode && m->ik.target_active) {
-        snprintf(ik_status, sizeof(ik_status),
-                 "IK: erro %.3f; mova cursor ou clique em alien.", (double)m->ik.error);
+        if (m->ik.orientation_active)
+            snprintf(ik_status, sizeof(ik_status), "IK: %.3f m / %.1f deg",
+                     (double)m->ik.error, (double)m->ik.orientation_error);
+        else
+            snprintf(ik_status, sizeof(ik_status),
+                     "IK: erro %.3f; mova cursor ou clique em alien.", (double)m->ik.error);
         status = ik_status;
     } else if (ui->ik_mode)
         status = "IK ativo: mova o cursor; clique no alien para captura automatica.";
