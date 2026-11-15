@@ -87,12 +87,13 @@ static void update_world(PrizeMachine *m) {
     RoboticArm *a = &m->arm;
     const MachineConfig *c = &MACHINE_CONFIG;
     a->joint[0]->local =
-        mat4_mul(mat4_translate(vec3(0, c->shoulder_height, 0)), mat4_rotate_y(a->angle[0]));
-    a->joint[1]->local = mat4_rotate_z(a->angle[1]);
+        mat4_mul(mat4_translate(vec3(0, c->shoulder_height, 0)),
+                 mat4_rotate_y(a->angles.current[0]));
+    a->joint[1]->local = mat4_rotate_z(a->angles.current[1]);
     a->joint[2]->local =
-        mat4_mul(mat4_translate(vec3(0, c->upper_length, 0)), mat4_rotate_z(a->angle[2]));
+        mat4_mul(mat4_translate(vec3(0, c->upper_length, 0)), mat4_rotate_z(a->angles.current[2]));
     a->joint[3]->local =
-        mat4_mul(mat4_translate(vec3(0, c->fore_length, 0)), mat4_rotate_z(a->angle[3]));
+        mat4_mul(mat4_translate(vec3(0, c->fore_length, 0)), mat4_rotate_z(a->angles.current[3]));
     for (int i = 0; i < 2; ++i) {
         float side = i == 0 ? -1.0f : 1.0f;
         a->finger[i]->local =
@@ -135,7 +136,7 @@ static bool build_arm(PrizeMachine *m) {
     const MachineConfig *c = &MACHINE_CONFIG;
     SceneNode *parent = m->root;
     for (int i = 0; i < JOINT_COUNT; ++i) {
-        a->angle[i] = a->target[i] = c->joints[i].initial;
+        a->angles.current[i] = a->angles.target[i] = c->joints[i].initial;
         a->joint[i] = add_node(parent, c->joints[i].name, NULL);
         if (!a->joint[i])
             return false;
@@ -254,11 +255,11 @@ typedef struct {
 
 static bool pose_valid_at(PrizeMachine *m, const float angle[JOINT_COUNT]) {
     float saved[JOINT_COUNT];
-    memcpy(saved, m->arm.angle, sizeof(saved));
-    memcpy(m->arm.angle, angle, sizeof(saved));
+    memcpy(saved, m->arm.angles.current, sizeof(saved));
+    memcpy(m->arm.angles.current, angle, sizeof(saved));
     update_world(m);
     bool valid = machine_pose_valid(m);
-    memcpy(m->arm.angle, saved, sizeof(saved));
+    memcpy(m->arm.angles.current, saved, sizeof(saved));
     update_world(m);
     return valid;
 }
@@ -423,9 +424,9 @@ static float solve_ik_seed(PrizeMachine *m, Vec3 target,
     const float tolerance = .05f;
     const float max_step_degrees = 18.0f;
     const float radians_to_degrees = 57.29577951308232f;
-    memcpy(m->arm.angle, seed, sizeof(m->arm.angle));
+    memcpy(m->arm.angles.current, seed, sizeof(m->arm.angles.current));
     update_world(m);
-    memcpy(solution, seed, sizeof(m->arm.angle));
+    memcpy(solution, seed, sizeof(m->arm.angles.current));
     float best_error = v3_length(v3_sub(machine_grip_position(m), target));
 
     /* CCD changes one degree of freedom at a time. Multiple legal starting
@@ -449,14 +450,15 @@ static float solve_ik_seed(PrizeMachine *m, Vec3 target,
                                  v3_dot(end_vector, target_vector)) * radians_to_degrees;
             delta = cg_clamp(delta, -max_step_degrees, max_step_degrees);
             const JointConfig *limits = &MACHINE_CONFIG.joints[joint];
-            m->arm.angle[joint] = cg_clamp(m->arm.angle[joint] + delta, limits->min, limits->max);
+            m->arm.angles.current[joint] =
+                cg_clamp(m->arm.angles.current[joint] + delta, limits->min, limits->max);
             update_world(m);
         }
 
         float candidate_error = v3_length(v3_sub(machine_grip_position(m), target));
         if (candidate_error < best_error) {
             best_error = candidate_error;
-            memcpy(solution, m->arm.angle, sizeof(m->arm.angle));
+            memcpy(solution, m->arm.angles.current, sizeof(m->arm.angles.current));
         }
     }
     return best_error;
@@ -476,7 +478,7 @@ bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
     }
 
     float original[JOINT_COUNT], best[JOINT_COUNT];
-    memcpy(original, m->arm.angle, sizeof(original));
+    memcpy(original, m->arm.angles.current, sizeof(original));
     memcpy(best, original, sizeof(best));
     float best_error = v3_length(v3_sub(machine_grip_position(m), target));
     float candidates[16][JOINT_COUNT], candidate_errors[16];
@@ -564,26 +566,26 @@ bool machine_solve_ik(PrizeMachine *m, Vec3 target, float *error) {
 
     /* The search is instantaneous; normal frame updates animate along a
      * collision-checked joint-space route to the best bounded solution. */
-    memcpy(m->arm.angle, original, sizeof(original));
+    memcpy(m->arm.angles.current, original, sizeof(original));
     update_world(m);
     if (!planned) {
-        m->ik_path_count = m->ik_path_index = 0;
-        memcpy(m->arm.target, original, sizeof(original));
-        m->ik_target = target;
-        m->ik_error = v3_length(v3_sub(machine_grip_position(m), target));
-        m->ik_target_active = true;
+        m->ik.path_count = m->ik.path_index = 0;
+        memcpy(m->arm.angles.target, original, sizeof(original));
+        m->ik.target = target;
+        m->ik.error = v3_length(v3_sub(machine_grip_position(m), target));
+        m->ik.target_active = true;
         if (error)
-            *error = m->ik_error;
+            *error = m->ik.error;
         message(m, "IK: nao encontrei uma rota livre de colisao.");
         return false;
     }
-    memcpy(m->ik_path, path, (size_t)path_count * sizeof(path[0]));
-    m->ik_path_count = path_count;
-    m->ik_path_index = 1;
-    memcpy(m->arm.target, m->ik_path[0], sizeof(m->arm.target));
-    m->ik_target = target;
-    m->ik_error = v3_length(v3_sub(machine_grip_position(m), target));
-    m->ik_target_active = true;
+    memcpy(m->ik.path, path, (size_t)path_count * sizeof(path[0]));
+    m->ik.path_count = path_count;
+    m->ik.path_index = 1;
+    memcpy(m->arm.angles.target, m->ik.path[0], sizeof(m->arm.angles.target));
+    m->ik.target = target;
+    m->ik.error = v3_length(v3_sub(machine_grip_position(m), target));
+    m->ik.target_active = true;
     if (error)
         *error = selected_error;
     if (selected_error <= tolerance)
@@ -705,20 +707,21 @@ bool machine_pose_valid(const PrizeMachine *m) {
 void machine_target_joint(PrizeMachine *m, int joint, float degrees) {
     if (m->round != ROUND_PLAYING || joint < 0 || joint >= JOINT_COUNT || !isfinite(degrees))
         return;
-    if (m->ik_path_count > 0) {
-        m->ik_path_count = m->ik_path_index = 0;
-        memcpy(m->arm.target, m->arm.angle, sizeof(m->arm.target));
+    if (m->ik.path_count > 0) {
+        m->ik.path_count = m->ik.path_index = 0;
+        memcpy(m->arm.angles.target, m->arm.angles.current, sizeof(m->arm.angles.target));
     }
-    m->ik_target_active = false;
+    m->ik.target_active = false;
     const JointConfig *c = &MACHINE_CONFIG.joints[joint];
-    m->arm.target[joint] = cg_clamp(degrees, c->min, c->max);
+    m->arm.angles.target[joint] = cg_clamp(degrees, c->min, c->max);
     if (degrees < c->min || degrees > c->max)
         message(m, "Limite da junta.");
 }
 void machine_nudge_joint(PrizeMachine *m, int joint, float degrees) {
     if (joint >= 0 && joint < JOINT_COUNT)
         machine_target_joint(m, joint,
-                             (m->ik_path_count > 0 ? m->arm.angle[joint] : m->arm.target[joint]) +
+                             (m->ik.path_count > 0 ? m->arm.angles.current[joint]
+                                                  : m->arm.angles.target[joint]) +
                                  degrees);
 }
 void machine_open(PrizeMachine *m) {
@@ -757,29 +760,29 @@ static void blocked(PrizeMachine *m) {
 }
 static bool ik_waypoint_reached(const PrizeMachine *m) {
     for (int joint = 0; joint < JOINT_COUNT; ++joint)
-        if (fabsf(m->arm.angle[joint] - m->arm.target[joint]) > .0001f)
+        if (fabsf(m->arm.angles.current[joint] - m->arm.angles.target[joint]) > .0001f)
             return false;
     return true;
 }
 static void advance_ik_waypoint(PrizeMachine *m) {
-    while (m->ik_path_count > 0 && ik_waypoint_reached(m)) {
-        if (m->ik_path_index >= m->ik_path_count) {
-            m->ik_path_count = m->ik_path_index = 0;
+    while (m->ik.path_count > 0 && ik_waypoint_reached(m)) {
+        if (m->ik.path_index >= m->ik.path_count) {
+            m->ik.path_count = m->ik.path_index = 0;
             return;
         }
-        memcpy(m->arm.target, m->ik_path[m->ik_path_index], sizeof(m->arm.target));
-        ++m->ik_path_index;
+        memcpy(m->arm.angles.target, m->ik.path[m->ik.path_index], sizeof(m->arm.angles.target));
+        ++m->ik.path_index;
     }
 }
 static void move_ik_joints(PrizeMachine *m, float dt) {
     advance_ik_waypoint(m);
-    if (m->ik_path_count == 0)
+    if (m->ik.path_count == 0)
         return;
 
     float old[JOINT_COUNT], duration = 0;
-    memcpy(old, m->arm.angle, sizeof(old));
+    memcpy(old, m->arm.angles.current, sizeof(old));
     for (int joint = 0; joint < JOINT_COUNT; ++joint) {
-        float distance = fabsf(m->arm.target[joint] - old[joint]);
+        float distance = fabsf(m->arm.angles.target[joint] - old[joint]);
         float speed = MACHINE_CONFIG.joints[joint].speed;
         if (speed > 0)
             duration = fmaxf(duration, distance / speed);
@@ -790,35 +793,37 @@ static void move_ik_joints(PrizeMachine *m, float dt) {
     }
     float fraction = fminf(1.0f, dt / duration);
     for (int joint = 0; joint < JOINT_COUNT; ++joint)
-        m->arm.angle[joint] = old[joint] + (m->arm.target[joint] - old[joint]) * fraction;
+        m->arm.angles.current[joint] =
+            old[joint] + (m->arm.angles.target[joint] - old[joint]) * fraction;
     update_world(m);
     if (!machine_pose_valid(m)) {
-        memcpy(m->arm.angle, old, sizeof(old));
-        memcpy(m->arm.target, old, sizeof(old));
+        memcpy(m->arm.angles.current, old, sizeof(old));
+        memcpy(m->arm.angles.target, old, sizeof(old));
         update_world(m);
-        m->ik_path_count = m->ik_path_index = 0;
+        m->ik.path_count = m->ik.path_index = 0;
         blocked(m);
         return;
     }
     if (fraction >= 1.0f) {
-        memcpy(m->arm.angle, m->arm.target, sizeof(m->arm.angle));
+        memcpy(m->arm.angles.current, m->arm.angles.target, sizeof(m->arm.angles.current));
         update_world(m);
         advance_ik_waypoint(m);
     }
 }
 static void move_joints(PrizeMachine *m, float dt) {
-    if (m->ik_path_count > 0) {
+    if (m->ik.path_count > 0) {
         move_ik_joints(m, dt);
         return;
     }
     for (int i = 0; i < JOINT_COUNT; ++i) {
-        float old = m->arm.angle[i];
-        m->arm.angle[i] = approach(old, m->arm.target[i], MACHINE_CONFIG.joints[i].speed * dt);
-        if (m->arm.angle[i] == old)
+        float old = m->arm.angles.current[i];
+        m->arm.angles.current[i] =
+            approach(old, m->arm.angles.target[i], MACHINE_CONFIG.joints[i].speed * dt);
+        if (m->arm.angles.current[i] == old)
             continue;
         update_world(m);
         if (!machine_pose_valid(m)) {
-            m->arm.angle[i] = m->arm.target[i] = old;
+            m->arm.angles.current[i] = m->arm.angles.target[i] = old;
             update_world(m);
             blocked(m);
         }
@@ -906,7 +911,7 @@ static bool spawn_move(PrizeMachine *m, int joint, float angle) {
     const JointConfig *config = &MACHINE_CONFIG.joints[joint];
     if (angle < config->min || angle > config->max)
         return false;
-    m->arm.target[joint] = angle;
+    m->arm.angles.target[joint] = angle;
     unsigned blocked_before = m->blocked_moves;
     /* Use the same swept joint steps as gameplay, without advancing the timer
      * or simulating gravity on the already-supported prizes. */
@@ -914,7 +919,7 @@ static bool spawn_move(PrizeMachine *m, int joint, float angle) {
         move_joints(m, MACHINE_CONFIG.max_step);
         if (m->blocked_moves != blocked_before)
             return false;
-        if (fabsf(m->arm.angle[joint] - angle) < .0001f)
+        if (fabsf(m->arm.angles.current[joint] - angle) < .0001f)
             return true;
     }
     return false;
@@ -1019,8 +1024,8 @@ void machine_update(PrizeMachine *m, float dt) {
         }
         int delivered = m->delivered;
         physics_step(m, step);
-        if (m->ik_target_active)
-            m->ik_error = v3_length(v3_sub(machine_grip_position(m), m->ik_target));
+        if (m->ik.target_active)
+            m->ik.error = v3_length(v3_sub(machine_grip_position(m), m->ik.target));
         if (m->release_contact >= 0) {
             AABB p = scene_bounds(m->prizes[m->release_contact].node);
             if (!aabb_overlap(p, scene_bounds(m->arm.parts[3]), 0) &&
@@ -1084,10 +1089,10 @@ int machine_pick(PrizeMachine *m, Ray ray) {
     return selected;
 }
 bool machine_at_target(const PrizeMachine *m) {
-    if (m->ik_path_count > 0)
+    if (m->ik.path_count > 0)
         return false;
     for (int i = 0; i < JOINT_COUNT; ++i)
-        if (fabsf(m->arm.angle[i] - m->arm.target[i]) > .001f)
+        if (fabsf(m->arm.angles.current[i] - m->arm.angles.target[i]) > .001f)
             return false;
     return fabsf(m->arm.opening - m->arm.opening_target) < .001f;
 }

@@ -101,10 +101,10 @@ static void draw_world(const UserInterface *ui, const PrizeMachine *m) {
         render_aabb(box, ACCENT);
         glLineWidth(1);
     }
-    if (ui->ik_mode && m->ik_target_active) {
-        Vec3 p = m->ik_target;
+    if (ui->ik_mode && m->ik.target_active) {
+        Vec3 p = m->ik.target;
         float r = .12f;
-        Color target_color = m->ik_error <= .05f ? ACCENT : GOLD;
+        Color target_color = m->ik.error <= .05f ? ACCENT : GOLD;
         render_line(vec3(p.x - r, p.y, p.z), vec3(p.x + r, p.y, p.z), target_color);
         render_line(vec3(p.x, p.y - r, p.z), vec3(p.x, p.y + r, p.z), target_color);
         render_line(vec3(p.x, p.y, p.z - r), vec3(p.x, p.y, p.z + r), target_color);
@@ -198,7 +198,7 @@ static void panel(const UserInterface *ui, const PrizeMachine *m) {
         snprintf(text, sizeof(text), "[%g, %g]", (double)MACHINE_CONFIG.joints[i].min,
                  (double)MACHINE_CONFIG.joints[i].max);
         render_text(left + 6, y + 39, text, MUTED, false);
-        snprintf(text, sizeof(text), "%6.1f", (double)m->arm.angle[i]);
+        snprintf(text, sizeof(text), "%6.1f", (double)m->arm.angles.current[i]);
         render_text(left + 112, y + 30, text, TEXT, true);
         render_rect(left + 199, y + 9, 31, 32, (Color){.14f, .22f, .28f});
         render_text(left + 210, y + 30, "-", TEXT, true);
@@ -216,10 +216,10 @@ static void panel(const UserInterface *ui, const PrizeMachine *m) {
                                                                    : "Aproxime a garra aberta";
     Color status_color =
         m->held >= 0 || machine_capture_candidate(m, NULL) >= 0 ? ACCENT : MUTED;
-    if (ui->ik_mode && m->ik_target_active) {
-        snprintf(text, sizeof(text), "Erro IK: %.3f", (double)m->ik_error);
+    if (ui->ik_mode && m->ik.target_active) {
+        snprintf(text, sizeof(text), "Erro IK: %.3f", (double)m->ik.error);
         status = text;
-        status_color = m->ik_error <= .05f ? ACCENT : GOLD;
+        status_color = m->ik.error <= .05f ? ACCENT : GOLD;
     }
     render_text(left, 593, status, status_color, false);
     button(left, 610, 130, "C  FECHAR", true);
@@ -400,9 +400,9 @@ void ui_draw(const UserInterface *ui, const PrizeMachine *m) {
         status = "Leve o premio ate a bandeja verde e abra a garra.";
     else if (machine_capture_candidate(m, NULL) >= 0)
         status = "Captura possivel. Pressione C para fechar.";
-    else if (ui->ik_mode && m->ik_target_active) {
+    else if (ui->ik_mode && m->ik.target_active) {
         snprintf(ik_status, sizeof(ik_status),
-                 "IK: erro %.3f; mova cursor ou clique em alien.", (double)m->ik_error);
+                 "IK: erro %.3f; mova cursor ou clique em alien.", (double)m->ik.error);
         status = ik_status;
     } else if (ui->ik_mode)
         status = "IK ativo: mova o cursor; clique no alien para captura automatica.";

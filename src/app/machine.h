@@ -17,14 +17,26 @@ typedef struct {
     float pickup_pose[JOINT_COUNT]; /* Spawn's validated FK solution; not an autopilot. */
 } Prize;
 typedef struct {
+    float current[JOINT_COUNT]; /* Pose used by FK to build the scene transforms. */
+    float target[JOINT_COUNT];  /* Desired pose shared by manual control and IK. */
+} JointAngles;
+typedef struct {
     SceneNode *joint[JOINT_COUNT], *finger[2], *grip;
     SceneNode *parts[ARM_PART_COUNT]; /* Upper, forearm, palm, fingers, three hubs, rotor. */
-    float angle[JOINT_COUNT], target[JOINT_COUNT], opening, opening_target;
+    JointAngles angles;
+    float opening, opening_target;
 } RoboticArm;
 typedef struct {
     SceneNode *node;
     const char *name;
 } Solid;
+typedef struct {
+    Vec3 target;
+    float error;
+    bool target_active;
+    float path[MACHINE_IK_PATH_MAX][JOINT_COUNT];
+    int path_count, path_index;
+} IkState;
 typedef struct {
     SceneNode *root; /* Sole owner of every node and geometry. */
     RoboticArm arm;
@@ -34,11 +46,7 @@ typedef struct {
     unsigned blocked_moves;
     char message[96];
     float message_time;
-    Vec3 ik_target;
-    float ik_error;
-    bool ik_target_active;
-    float ik_path[MACHINE_IK_PATH_MAX][JOINT_COUNT];
-    int ik_path_count, ik_path_index;
+    IkState ik;
     GameMode mode;
     RoundState round;
     float time_remaining;
