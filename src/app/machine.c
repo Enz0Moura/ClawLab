@@ -80,10 +80,11 @@ static bool solid_child(PrizeMachine *m, SceneNode *parent, const char *name, Ma
     m->solids[m->solid_count++] = (Solid){node, name};
     return true;
 }
-static bool themed_solid(PrizeMachine *m, const char *name, ThemePart part) {
+static bool themed_solid(PrizeMachine *m, const char *name, ThemePart part,
+                         const ThemeCabinetDesign *design) {
     if (m->solid_count >= MAX_SOLIDS)
         return false;
-    Geometry *geometry = theme_cabinet_create(part);
+    Geometry *geometry = theme_cabinet_create_design(part, design);
     if (!geometry)
         return false;
     SceneNode *node = add_node(m->root, name, geometry);
@@ -116,10 +117,11 @@ static void update_world(PrizeMachine *m) {
     }
 }
 static bool build_cabinet(PrizeMachine *m) {
-    if (!themed_solid(m, "piso", THEME_FLOOR))
+    ThemeCabinetDesign design = theme_cabinet_default_design();
+    if (!themed_solid(m, "piso", THEME_FLOOR, &design))
         return false;
 
-    Geometry *wall = theme_cabinet_create(THEME_BACK_WALL);
+    Geometry *wall = theme_cabinet_create_design(THEME_BACK_WALL, &design);
     if (!wall)
         return false;
     m->back_wall = add_node(m->root, "parede curva traseira", wall);
@@ -130,25 +132,27 @@ static bool build_cabinet(PrizeMachine *m) {
         return false;
 
     const float pi = 3.14159265358979323846f;
-    for (int i = 0; i < THEME_BACK_WALL_SEGMENTS; ++i) {
-        float a0 = pi + pi * (float)i / THEME_BACK_WALL_SEGMENTS;
-        float a1 = pi + pi * (float)(i + 1) / THEME_BACK_WALL_SEGMENTS;
+    const ThemeBackWallDesign *wall_design = &design.back_wall;
+    unsigned segments = wall_design->collision_segments;
+    for (unsigned i = 0; i < segments; ++i) {
+        float a0 = pi + pi * (float)i / (float)segments;
+        float a1 = pi + pi * (float)(i + 1) / (float)segments;
         float angle = .5f * (a0 + a1);
-        Vec3 start = vec3(1 + THEME_MAP_RADIUS_X * cosf(a0), 0,
-                          THEME_MAP_RADIUS_Z * sinf(a0));
-        Vec3 end = vec3(1 + THEME_MAP_RADIUS_X * cosf(a1), 0,
-                        THEME_MAP_RADIUS_Z * sinf(a1));
-        float dx = -THEME_MAP_RADIUS_X * sinf(angle);
-        float dz = THEME_MAP_RADIUS_Z * cosf(angle);
+        Vec3 start = vec3(wall_design->center_x + wall_design->radius_x * cosf(a0), 0,
+                          wall_design->radius_z * sinf(a0));
+        Vec3 end = vec3(wall_design->center_x + wall_design->radius_x * cosf(a1), 0,
+                        wall_design->radius_z * sinf(a1));
+        float dx = -wall_design->radius_x * sinf(angle);
+        float dz = wall_design->radius_z * cosf(angle);
         float yaw = atan2f(-dz, dx) * (180.0f / pi);
-        Vec3 center = vec3(1 + THEME_MAP_RADIUS_X * cosf(angle),
-                           THEME_BACK_WALL_HEIGHT * .5f,
-                           THEME_MAP_RADIUS_Z * sinf(angle));
+        Vec3 center = vec3(wall_design->center_x + wall_design->radius_x * cosf(angle),
+                           wall_design->height * .5f,
+                           wall_design->radius_z * sinf(angle));
         Mat4 local = mat4_mul(
             mat4_translate(center),
             mat4_mul(mat4_rotate_y(yaw),
-                     mat4_scale(vec3(v3_length(v3_sub(end, start)), THEME_BACK_WALL_HEIGHT,
-                                     THEME_BACK_WALL_THICKNESS))));
+                     mat4_scale(vec3(v3_length(v3_sub(end, start)), wall_design->height,
+                                     wall_design->thickness))));
         if (!solid_child(m, m->back_wall_collision, "segmento da parede traseira", local))
             return false;
     }
@@ -165,9 +169,10 @@ static bool build_cabinet(PrizeMachine *m) {
         return false;
     /* New structural parts stay outside the playable interior, but also
      * participate in picking/collision as conservative AABBs. */
-    if (!themed_solid(m, "cupula", THEME_ROOF) || !themed_solid(m, "fuselagem", THEME_BASE) ||
-        !themed_solid(m, "aleta esquerda", THEME_FIN_LEFT) ||
-        !themed_solid(m, "aleta direita", THEME_FIN_RIGHT))
+    if (!themed_solid(m, "cupula", THEME_ROOF, &design) ||
+        !themed_solid(m, "fuselagem", THEME_BASE, &design) ||
+        !themed_solid(m, "aleta esquerda", THEME_FIN_LEFT, &design) ||
+        !themed_solid(m, "aleta direita", THEME_FIN_RIGHT, &design))
         return false;
     return true;
 }
@@ -240,7 +245,8 @@ PrizeMachine *machine_create_seeded(GameMode mode, uint32_t seed) {
     const MachineConfig *c = &MACHINE_CONFIG;
     static const char *names[PRIZE_COUNT] = {"Coral", "Azul", "Amarelo"};
     for (int i = 0; i < PRIZE_COUNT; ++i) {
-        Geometry *alien = theme_alien_create(c->prize_colors[i]);
+        ThemeAlienDesign alien_design = theme_alien_default_design(c->prize_colors[i]);
+        Geometry *alien = theme_alien_create_design(&alien_design);
         if (!alien) {
             machine_destroy(m);
             return NULL;
@@ -1233,6 +1239,13 @@ static void place_spawn(Prize *p, const float pose[JOINT_COUNT], float yaw) {
                           mat4_scale(vec3(c->prize_size, c->prize_size, c->prize_size))));
 }
 static bool spawn_sites_valid(const PrizeMachine *m) {
+    AABB floor = scene_bounds(m->solids[0].node);
+    float center_x = (floor.min.x + floor.max.x) * .5f;
+    float center_z = (floor.min.z + floor.max.z) * .5f;
+    float radius_x = (floor.max.x - floor.min.x) * .5f;
+    float radius_z = (floor.max.z - floor.min.z) * .5f;
+    if (radius_x <= 0 || radius_z <= 0)
+        return false;
     for (int p = 0; p < PRIZE_COUNT; ++p) {
         AABB box = scene_bounds(m->prizes[p].node);
         if (!inside_workspace(box) || fabsf(box.min.y) > .0001f)
@@ -1240,8 +1253,8 @@ static bool spawn_sites_valid(const PrizeMachine *m) {
         /* The floor is an ellipse, not its enclosing AABB. Keep the whole
          * footprint inside it, with a margin for the 64-sided floor mesh. */
         for (int corner = 0; corner < 4; ++corner) {
-            float x = ((corner & 1 ? box.max.x : box.min.x) - 1) / 3;
-            float z = (corner & 2 ? box.max.z : box.min.z) / 3.6f;
+            float x = ((corner & 1 ? box.max.x : box.min.x) - center_x) / radius_x;
+            float z = ((corner & 2 ? box.max.z : box.min.z) - center_z) / radius_z;
             if (x * x + z * z > .98f)
                 return false;
         }
