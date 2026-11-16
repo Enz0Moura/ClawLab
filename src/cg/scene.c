@@ -56,5 +56,7 @@ void scene_draw(SceneNode *root) {
         scene_draw(child);
 }
 AABB scene_bounds(const SceneNode *node) {
-    return aabb_transform(node->geometry->bounds, node->world);
+    AABB bounds = node->geometry->bounds;
+    bounds.transform(&bounds, node->world);
+    return bounds;
 }

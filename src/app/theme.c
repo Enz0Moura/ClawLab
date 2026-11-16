@@ -104,19 +104,16 @@ static void ring(Builder *b, Vec3 center, float rx, float ry, float thickness, C
         quad(b, p[0], p[3], p[2], p[1], color);
     }
 }
-static void star(Builder *b, Vec3 center, float radius, Color color, bool floor) {
-    for (int i = 0; i < 10; ++i) {
-        float a = cg_radians(90 + 36.0f * i), next = cg_radians(90 + 36.0f * (i + 1));
-        float r0 = i % 2 ? radius * .42f : radius, r1 = i % 2 ? radius : radius * .42f;
-        Vec3 p0 = vec3(center.x + r0 * cosf(a), center.y + r0 * sinf(a), center.z);
-        Vec3 p1 = vec3(center.x + r1 * cosf(next), center.y + r1 * sinf(next), center.z);
-        if (floor) {
-            p0 = vec3(center.x + r0 * cosf(a), center.y, center.z + r0 * sinf(a));
-            p1 = vec3(center.x + r1 * cosf(next), center.y, center.z + r1 * sinf(next));
-            face(b, center, p1, p0, color);
-        } else
-            face(b, center, p0, p1, color);
-    }
+static Vec3 back_wall_inward(float angle) {
+    Vec3 tangent = vec3(-THEME_MAP_RADIUS_X * sinf(angle), 0,
+                        THEME_MAP_RADIUS_Z * cosf(angle));
+    Vec3 normal = v3_normalize(v3_cross(tangent, vec3(0, 1, 0)));
+    return normal;
+}
+static Vec3 back_wall_point(float angle, float y, float inset) {
+    Vec3 point = vec3(1 + THEME_MAP_RADIUS_X * cosf(angle), y,
+                      THEME_MAP_RADIUS_Z * sinf(angle));
+    return v3_add(point, v3_scale(back_wall_inward(angle), inset));
 }
 static void fin(Builder *b, float side) {
     /* Convex extruded silhouette, attached outside the reachable volume. */
@@ -165,18 +162,39 @@ Geometry *theme_alien_create(Color uniform) {
     /* The whole character fits this conservative unit envelope. Keeping it
      * explicit preserves the geometric grasp and the documented FK tutorial. */
     if (geometry)
-        geometry->bounds = (AABB){{-.5f, -.5f, -.5f}, {.5f, .5f, .5f}};
+        geometry->bounds = aabb_make(vec3(-.5f, -.5f, -.5f), vec3(.5f, .5f, .5f));
     return geometry;
 }
 Geometry *theme_cabinet_create(ThemePart part) {
     Builder b = begin_mesh();
     if (part == THEME_FLOOR) {
         const float profile[][2] = {{-.32f, 1}, {0, 1}};
-        lathe(&b, vec3(1, 0, 0), 3, 3.6f, profile, 2, BLUE);
+        lathe(&b, vec3(1, 0, 0), THEME_MAP_RADIUS_X, THEME_MAP_RADIUS_Z, profile, 2, BLUE);
         for (int i = 0; i < 64; ++i) {
             float a = cg_radians(360.0f * i / 64), next = cg_radians(360.0f * (i + 1) / 64);
-            face(&b, vec3(1, 0, 0), vec3(1 + 3 * cosf(next), 0, 3.6f * sinf(next)),
-                 vec3(1 + 3 * cosf(a), 0, 3.6f * sinf(a)), (Color){.07f, .14f, .34f});
+            face(&b, vec3(1, 0, 0),
+                 vec3(1 + THEME_MAP_RADIUS_X * cosf(next), 0, THEME_MAP_RADIUS_Z * sinf(next)),
+                 vec3(1 + THEME_MAP_RADIUS_X * cosf(a), 0, THEME_MAP_RADIUS_Z * sinf(a)),
+                 (Color){.07f, .14f, .34f});
+        }
+    } else if (part == THEME_BACK_WALL) {
+        static const Color panel = {.045f, .09f, .24f};
+        const int curve_segments = 96;
+        const float pi = 3.14159265358979323846f;
+        for (int i = 0; i < curve_segments; ++i) {
+            float a0 = pi + pi * (float)i / curve_segments;
+            float a1 = pi + pi * (float)(i + 1) / curve_segments;
+            Vec3 n0 = back_wall_inward(a0), n1 = back_wall_inward(a1);
+            MeshVertex low0 = {back_wall_point(a0, 0, THEME_BACK_WALL_THICKNESS * .5f), n0, panel};
+            MeshVertex low1 = {back_wall_point(a1, 0, THEME_BACK_WALL_THICKNESS * .5f), n1, panel};
+            MeshVertex high1 = {back_wall_point(a1, THEME_BACK_WALL_HEIGHT,
+                                                THEME_BACK_WALL_THICKNESS * .5f),
+                                n1, panel};
+            MeshVertex high0 = {back_wall_point(a0, THEME_BACK_WALL_HEIGHT,
+                                                THEME_BACK_WALL_THICKNESS * .5f),
+                                n0, panel};
+            triangle(&b, low0, low1, high1);
+            triangle(&b, low0, high1, high0);
         }
     } else if (part == THEME_ROOF) {
         const float dome[][2] = {{4.48f, 1},    {4.72f, 1},    {5.12f, .96f},
@@ -200,20 +218,6 @@ Geometry *theme_cabinet_create(ThemePart part) {
         }
     } else if (part == THEME_FIN_LEFT || part == THEME_FIN_RIGHT) {
         fin(&b, part == THEME_FIN_LEFT ? -1.0f : 1.0f);
-    } else {
-        /* Back-wall decals lie on the visible side of the existing solid. */
-        for (int i = 0; i < 36; ++i) {
-            float x = -.30f + (float)((i * 37) % 53) * .05f;
-            float y = .40f + (float)((i * 17) % 35) * .105f;
-            star(&b, vec3(x, y, -3.205f), i % 5 == 0 ? .10f : .045f, i % 3 ? WHITE : YELLOW, false);
-        }
-        ellipsoid(&b, vec3(1, 3.35f, -3.17f), vec3(.80f, .80f, .055f), YELLOW);
-        ring(&b, vec3(1, 3.35f, -3.13f), .67f, .19f, .045f, RED_LIGHT);
-        for (int i = 0; i < 12; ++i) {
-            float x = -1.25f + (float)((i * 11) % 47) * .10f,
-                  z = -2.9f + (float)((i * 17) % 55) * .10f;
-            star(&b, vec3(x, .005f, z), .09f, (Color){.23f, .40f, .70f}, true);
-        }
     }
     return finish_mesh(&b);
 }

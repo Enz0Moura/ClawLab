@@ -23,7 +23,7 @@ const MachineConfig MACHINE_CONFIG = {
     .drop_yaw = {-75, -90, -105},
     .prize_colors = {{1, .32f, .30f}, {.16f, .74f, .95f}, {1, .76f, .16f}},
     .tray_center = {0, .06f, 2.5f},
-    .workspace = {{-1.8f, 0, -3.4f}, {3.7f, 4.4f, 3.4f}}};
+    .workspace = AABB_INIT(-1.8f, 0, -3.4f, 3.7f, 4.4f, 3.4f)};
 const float PICKUP_POSE[JOINT_COUNT] = {0, -45, -85, -50};
 const ModeConfig GAME_MODES[MODE_COUNT] = {
     {"Sandbox", 0, .18f, 5, 5, 3, 1, {2.50f, .12f, 1.60f}},

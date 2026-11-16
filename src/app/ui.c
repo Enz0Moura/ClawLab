@@ -51,19 +51,6 @@ static void ellipse(float x, float y, float rx, float ry, Color color) {
     }
     glEnd();
 }
-static void planet_icon(float x, float y, float radius) {
-    ellipse(x, y, radius, radius, GOLD);
-    glColor3f(.98f, .21f, .17f);
-    glLineWidth(3);
-    glBegin(GL_LINE_LOOP);
-    for (int i = 0; i < 48; ++i) {
-        float a = cg_radians(360.0f * i / 48), px = radius * 1.55f * cosf(a),
-              py = radius * .38f * sinf(a);
-        glVertex2f(x + px, y + py - px * .25f);
-    }
-    glEnd();
-    glLineWidth(1);
-}
 static void alien_icon(float x, float y, float radius) {
     const Color green = {.64f, .88f, .14f};
     ellipse(x - radius, y, radius * .40f, radius * .22f, green);
@@ -76,47 +63,6 @@ static void alien_icon(float x, float y, float radius) {
         ellipse(x + i * radius * .48f, y - 1, radius * .08f, radius * .13f, INK);
     }
 }
-static void space_background(const UserInterface *ui) {
-    float w = (float)ui_view_width(ui), top = UI_TOP, bottom = (float)ui->height - UI_BOTTOM;
-    glBegin(GL_QUADS);
-    glColor3f(.035f, .045f, .14f);
-    glVertex2f(0, top);
-    glVertex2f(w, top);
-    glColor3f(.085f, .105f, .25f);
-    glVertex2f(w, bottom);
-    glVertex2f(0, bottom);
-    glEnd();
-    retro_dots(8, top + 8, w - 16, (bottom - top) * .55f, 15, 2,
-               (Color){.075f, .06f, .20f}, (Color){.11f, .07f, .25f});
-    float horizon = top + (bottom - top) * .70f;
-    glLineWidth(1);
-    glColor3f(.24f, .055f, .22f);
-    glBegin(GL_LINES);
-    for (int i = 0; i <= 24; ++i) {
-        glVertex2f(w * .5f, horizon);
-        glVertex2f(w * (float)i / 24.0f, bottom);
-    }
-    for (int i = 1; i <= 8; ++i) {
-        float t = (float)i / 8.0f;
-        float y = horizon + (bottom - horizon) * t * t;
-        glVertex2f(0, y);
-        glVertex2f(w, y);
-    }
-    glEnd();
-    for (int i = 0; i < 65; ++i) {
-        float x = 18 + (float)((i * 137 + 31) % 947) / 947 * (w - 36);
-        float y = top + 44 + (float)((i * 83 + 17) % 601) / 601 * (bottom - top - 68);
-        float size = i % 9 == 0 ? 2.2f : 1.0f;
-        Color color = i % 9 == 0 ? GOLD : (Color){.36f, .43f, .65f};
-        render_rect(x, y, size, size, color);
-        if (i % 9 == 0) {
-            render_rect(x - 3, y + .6f, 8, 1, color);
-            render_rect(x + .6f, y - 3, 1, 8, color);
-        }
-    }
-    planet_icon(68, 159, 18);
-    render_text(103, 155, "PIZZA PLANET", GOLD, false);
-}
 static float panel_scale(const UserInterface *ui) {
     return cg_clamp((float)ui_view_height(ui) / 654, .65f, 1);
 }
@@ -127,6 +73,57 @@ int ui_view_width(const UserInterface *ui) {
 int ui_view_height(const UserInterface *ui) {
     int h = ui->height - UI_TOP - UI_BOTTOM;
     return h > 1 ? h : 1;
+}
+static bool rear_panel_in_view(const UserInterface *ui, const PrizeMachine *m) {
+    for (SceneNode *segment = m->back_wall_collision->first_child; segment;
+         segment = segment->next_sibling) {
+        for (int y = 0; y < 3; ++y) {
+            float local_y = -.42f + .42f * y;
+            Vec3 point = mat4_point(segment->world, vec3(0, local_y, .42f));
+            Vec3 screen;
+            if (camera_project(&ui->camera, point, ui_view_width(ui), ui_view_height(ui), &screen) &&
+                screen.x >= 0 && screen.x <= ui_view_width(ui) && screen.y >= 0 &&
+                screen.y <= ui_view_height(ui))
+                return true;
+        }
+    }
+    return false;
+}
+static float rear_panel_opacity(const UserInterface *ui, const PrizeMachine *m) {
+    Vec3 eye = camera_eye(&ui->camera);
+    Vec3 view = v3_normalize(v3_sub(ui->camera.target, eye));
+    AABB panel = scene_bounds(m->back_wall);
+    float exterior_distance = panel.min.z - eye.z;
+    if (view.z < .15f || exterior_distance < -.25f || !rear_panel_in_view(ui, m))
+        return 1;
+    float t = cg_clamp((exterior_distance + .25f) / .55f, 0, 1);
+    float fade = t * t * (3 - 2 * t);
+    return 1 - .82f * fade;
+}
+static void draw_scene_except(SceneNode *node, const SceneNode *skip_a, const SceneNode *skip_b) {
+    if (!node || node == skip_a || node == skip_b)
+        return;
+    if (node->geometry) {
+        glPushMatrix();
+        glMultMatrixf(node->world.m);
+        node->geometry->draw(node->geometry);
+        glPopMatrix();
+    }
+    for (SceneNode *child = node->first_child; child; child = child->next_sibling)
+        draw_scene_except(child, skip_a, skip_b);
+}
+static void draw_rear_panel(const PrizeMachine *m) {
+    glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_CURRENT_BIT);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    /* Keep the curved wall in the depth buffer so overlapping geometry cannot
+     * blend it twice. */
+    glDepthMask(GL_TRUE);
+    glPushMatrix();
+    glMultMatrixf(m->back_wall->world.m);
+    m->back_wall->geometry->draw(m->back_wall->geometry);
+    glPopMatrix();
+    glPopAttrib();
 }
 static void button(float x, float y, float w, const char *label, bool accent) {
     Color edge = accent ? RETRO_PINK : RETRO_CYAN;
@@ -140,7 +137,10 @@ static void button(float x, float y, float w, const char *label, bool accent) {
 }
 static void draw_world(const UserInterface *ui, const PrizeMachine *m) {
     render_camera(&ui->camera, 0, UI_BOTTOM, ui_view_width(ui), ui_view_height(ui));
-    scene_draw(m->root);
+    float rear_opacity = rear_panel_opacity(ui, m);
+    m->back_wall->geometry->opacity = rear_opacity;
+    draw_scene_except(m->root, m->back_wall_collision,
+                      rear_opacity < .999f ? m->back_wall : NULL);
     AABB tray = scene_bounds(m->solids[m->tray_solid].node);
     for (int i = 1; i < PRIZE_COUNT; ++i) {
         float x = tray.min.x + (tray.max.x - tray.min.x) * (float)i / PRIZE_COUNT;
@@ -183,13 +183,15 @@ static void draw_world(const UserInterface *ui, const PrizeMachine *m) {
         glPushMatrix();
         glMultMatrixf(m->arm.grip->world.m);
         render_aabb(
-            (AABB){
-                {-MACHINE_CONFIG.capture_x, -MACHINE_CONFIG.capture_y, -MACHINE_CONFIG.capture_z},
-                {MACHINE_CONFIG.capture_x, MACHINE_CONFIG.capture_y, MACHINE_CONFIG.capture_z}},
+            (AABB)AABB_INIT(-MACHINE_CONFIG.capture_x, -MACHINE_CONFIG.capture_y,
+                            -MACHINE_CONFIG.capture_z, MACHINE_CONFIG.capture_x,
+                            MACHINE_CONFIG.capture_y, MACHINE_CONFIG.capture_z),
             (Color){1, .3f, .8f});
         glPopMatrix();
         render_aabb(machine_delivery_region(m), ACCENT);
     }
+    if (rear_opacity < .999f)
+        draw_rear_panel(m);
 }
 static void labels(const UserInterface *ui, const PrizeMachine *m) {
     for (int i = 0; i < PRIZE_COUNT; ++i) {
@@ -423,8 +425,10 @@ static void pause_menu(const UserInterface *ui, const PrizeMachine *m) {
     const char *labels[] = {"P  CONTINUAR", "R  RESETAR PARTIDA", "M  VOLTAR AOS MODOS"};
     for (int i = 0; i < 3; ++i) {
         UIRect r = ui_pause_rect(ui, i);
-        button(r.x, r.y, r.w, labels[i], i == 0);
+        button(r.x, r.y, r.w, labels[i], i == ui->pause_selection);
     }
+    render_text(first.x, y + 267, "SETAS: NAVEGAR   ENTER: ESCOLHER   P/ESC: CONTINUAR", ACCENT,
+                false);
     render_text(first.x, y + 290, "Resetar comeca novamente no mesmo modo.", MUTED, false);
     render_text(first.x, y + 312, "Voltar aos modos encerra a partida atual.", MUTED, false);
 }
@@ -605,7 +609,6 @@ static void menu_preview_frame(const UserInterface *ui) {
     render_rect(r.x + r.w, r.y - 2, 2, r.h + 4, pink);
 }
 static void menu(const UserInterface *ui) {
-    static const Color frame = {.98f, .31f, .23f};
     static const Color cyan = {.22f, .79f, .79f};
     static const Color mode_colors[] = {
         {.69f, .91f, .24f}, {.24f, .80f, .74f}, {1, .81f, .18f}, {1, .32f, .30f}};
@@ -626,11 +629,6 @@ static void menu(const UserInterface *ui) {
         float list_w = art_x - list_x - 28;
         float list_h = fminf(402, (float)ui->height - 230);
         Color pink = {.96f, .23f, .69f};
-        render_rect(frame_x, 39, frame_w, 3, frame);
-        render_rect(frame_x, 42, frame_w, 1, (Color){.30f, .19f, .34f});
-        render_text(frame_x + 4, 79, "A GARRA!", GOLD, true);
-        render_text(frame_x + 134, 78, "RESGATE ESPACIAL  /  EDICAO ARCADE", cyan, false);
-        render_text(frame_x + frame_w - 228, 78, "SETAS + ENTER  /  1-4", TEXT, false);
         claw_cabinet(art_x, 166, art_w, fminf(448, (float)ui->height - 225));
         render_rect(list_x + 8, 198, list_w, list_h, (Color){.012f, .008f, .055f});
         render_rect(list_x, 190, list_w, list_h, (Color){.045f, .018f, .12f});
@@ -652,9 +650,6 @@ static void menu(const UserInterface *ui) {
         float art_h = 116;
         float art_x = 24;
         float art_w = (float)ui->width - 48;
-        render_rect(24, 38, (float)ui->width - 48, 3, frame);
-        render_text(25, 76, "A GARRA!", GOLD, true);
-        render_text(154, 75, "RESGATE ESPACIAL  /  EDICAO ARCADE", cyan, false);
         claw_screen_background(art_x, art_y, art_w, art_h, false);
         render_text(first.x, 249, ui->mode_select ? "ESCOLHA SUA MISSAO" : "MENU PRINCIPAL",
                     GOLD, true);
@@ -726,31 +721,21 @@ void ui_draw(const UserInterface *ui, const PrizeMachine *m) {
         render_overlay_end();
         return;
     }
-    render_overlay_begin(ui->width, ui->height);
-    space_background(ui);
-    render_overlay_end();
     draw_world(ui, m);
     render_overlay_begin(ui->width, ui->height);
     labels(ui, m);
-    retro_bar(0, 0, (float)ui->width, UI_TOP);
-    planet_icon(43, 37, 15);
-    render_text(76, 36, "PIZZA PLANET", TEXT, true);
-    render_text(76, 56, "A GARRA!   /   LACLAW LAB", GOLD, false);
-    char clock[80];
-    if (GAME_MODES[m->mode].time_limit > 0) {
+    if (m->mode != MODE_SANDBOX) {
         int seconds = (int)ceilf(m->time_remaining);
-        snprintf(clock, sizeof(clock), "%s / %02d:%02d", GAME_MODES[m->mode].name, seconds / 60,
-                 seconds % 60);
-    } else
-        snprintf(clock, sizeof(clock), "SANDBOX / SEM TEMPO LIMITE");
-    retro_chip((float)ui->width - 500, 23, 300, 31,
-               m->mode != MODE_SANDBOX && m->time_remaining < 30 ? RETRO_PINK : GOLD);
-    render_text((float)ui->width - 480, 43, clock,
-                m->mode != MODE_SANDBOX && m->time_remaining < 30 ? (Color){1, .32f, .30f} : GOLD,
-                false);
+        char clock[64];
+        snprintf(clock, sizeof(clock), "%s  /  %02d:%02d", GAME_MODES[m->mode].name,
+                 seconds / 60, seconds % 60);
+        Color timer_color = m->time_remaining < 30 ? RETRO_PINK : GOLD;
+        retro_chip(20, 23, 300, 31, timer_color);
+        render_text(35, 43, clock, timer_color, false);
+    }
     button((float)ui->width - 155, 23, 130, ui->paused ? "P  CONTINUAR" : "P  PAUSA", false);
-    render_text(25, 105, ui->debug ? "DEPURACAO  /  D para ocultar" : "RESGATE A TRIPULACAO!",
-                ui->debug ? (Color){1, .6f, .2f} : MUTED, false);
+    if (ui->debug)
+        render_text(25, 105, "DEPURACAO  /  D para ocultar", (Color){1, .6f, .2f}, false);
     panel(ui, m);
     float footer_y = (float)ui->height - UI_BOTTOM;
     retro_bar(0, footer_y, (float)ui_view_width(ui), UI_BOTTOM);

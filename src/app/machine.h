@@ -43,6 +43,7 @@ typedef struct {
 } IkState;
 typedef struct {
     SceneNode *root; /* Sole owner of every node and geometry. */
+    SceneNode *back_wall, *back_wall_collision; /* Borrowed from root. */
     RoboticArm arm;
     Prize prizes[PRIZE_COUNT];
     Solid solids[MAX_SOLIDS];

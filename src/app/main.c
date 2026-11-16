@@ -219,6 +219,8 @@ static void update_ik_interaction_after_step(void) {
 }
 static void toggle_pause(void) {
     ui.paused = !ui.paused;
+    if (ui.paused)
+        ui.pause_selection = 0;
     ui.help = false;
     held_direction = 0;
     drag_button = -1;
@@ -289,7 +291,14 @@ static void key(unsigned char k, int x, int y) {
         return;
     }
     if (ui.paused) {
-        if (k == 'r')
+        if (k == '\r' || k == '\n' || k == ' ') {
+            if (ui.pause_selection == 0)
+                toggle_pause();
+            else if (ui.pause_selection == 1)
+                reset();
+            else
+                return_to_modes();
+        } else if (k == 'r')
             reset();
         else if (k == 'm')
             return_to_modes();
@@ -378,8 +387,16 @@ static void special(int k, int x, int y) {
         }
         return;
     }
-    if (ui.paused)
+    if (ui.paused) {
+        int step = (k == GLUT_KEY_UP || k == GLUT_KEY_LEFT) ? -1
+                   : (k == GLUT_KEY_DOWN || k == GLUT_KEY_RIGHT) ? 1
+                                                                  : 0;
+        if (step) {
+            ui.pause_selection = (ui.pause_selection + step + 3) % 3;
+            glutPostRedisplay();
+        }
         return;
+    }
     if (k == GLUT_KEY_F1) {
         key('h', 0, 0);
         return;

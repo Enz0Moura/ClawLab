@@ -10,6 +10,7 @@ typedef struct {
 typedef struct Geometry Geometry;
 struct Geometry {
     Color color;
+    float opacity; /* Multiplies rendered alpha; 1 is opaque. */
     AABB bounds;
     const char *name;             /* Borrowed static string. */
     void (*draw)(Geometry *self); /* Requires a current compatibility GL context. */

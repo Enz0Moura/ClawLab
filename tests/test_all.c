@@ -48,7 +48,7 @@ static void test_math(void) {
     CHECK(mat4_inverse(matrix, &inverse));
     check_vec(mat4_point(mat4_mul(inverse, matrix), vec3(3, -2, 8)), vec3(3, -2, 8));
     CHECK(!mat4_inverse(mat4_scale(vec3(1, 0, 1)), &inverse));
-    AABB unit = {{-.5f, -.5f, -.5f}, {.5f, .5f, .5f}};
+    AABB unit = AABB_INIT(-.5f, -.5f, -.5f, .5f, .5f, .5f);
     AABB rotated = aabb_transform(unit, mat4_rotate_y(45));
     CHECK(near(rotated.max.x, sqrtf(.5f)));
     CHECK(near(rotated.min.z, -sqrtf(.5f)));

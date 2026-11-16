@@ -71,6 +71,15 @@ static bool solid(PrizeMachine *m, const char *name, Vec3 position, Vec3 size, C
     m->solids[m->solid_count++] = (Solid){node, name};
     return true;
 }
+static bool solid_child(PrizeMachine *m, SceneNode *parent, const char *name, Mat4 local) {
+    if (m->solid_count >= MAX_SOLIDS)
+        return false;
+    SceneNode *node = add_shape(parent, name, (Color){.045f, .09f, .24f}, false, local);
+    if (!node)
+        return false;
+    m->solids[m->solid_count++] = (Solid){node, name};
+    return true;
+}
 static bool themed_solid(PrizeMachine *m, const char *name, ThemePart part) {
     if (m->solid_count >= MAX_SOLIDS)
         return false;
@@ -107,10 +116,44 @@ static void update_world(PrizeMachine *m) {
     }
 }
 static bool build_cabinet(PrizeMachine *m) {
-    if (!themed_solid(m, "piso", THEME_FLOOR) ||
-        !solid(m, "fundo", vec3(1, 2.2f, -3.30f), vec3(3, 4.4f, .16f),
-               (Color){.045f, .09f, .24f}) ||
-        !solid(m, "coluna esquerda", vec3(-1.9f, 2.3f, 0), vec3(.16f, 4.6f, .16f), RED) ||
+    if (!themed_solid(m, "piso", THEME_FLOOR))
+        return false;
+
+    Geometry *wall = theme_cabinet_create(THEME_BACK_WALL);
+    if (!wall)
+        return false;
+    m->back_wall = add_node(m->root, "parede curva traseira", wall);
+    if (!m->back_wall)
+        return false;
+    m->back_wall_collision = add_node(m->root, "colisoes da parede traseira", NULL);
+    if (!m->back_wall_collision)
+        return false;
+
+    const float pi = 3.14159265358979323846f;
+    for (int i = 0; i < THEME_BACK_WALL_SEGMENTS; ++i) {
+        float a0 = pi + pi * (float)i / THEME_BACK_WALL_SEGMENTS;
+        float a1 = pi + pi * (float)(i + 1) / THEME_BACK_WALL_SEGMENTS;
+        float angle = .5f * (a0 + a1);
+        Vec3 start = vec3(1 + THEME_MAP_RADIUS_X * cosf(a0), 0,
+                          THEME_MAP_RADIUS_Z * sinf(a0));
+        Vec3 end = vec3(1 + THEME_MAP_RADIUS_X * cosf(a1), 0,
+                        THEME_MAP_RADIUS_Z * sinf(a1));
+        float dx = -THEME_MAP_RADIUS_X * sinf(angle);
+        float dz = THEME_MAP_RADIUS_Z * cosf(angle);
+        float yaw = atan2f(-dz, dx) * (180.0f / pi);
+        Vec3 center = vec3(1 + THEME_MAP_RADIUS_X * cosf(angle),
+                           THEME_BACK_WALL_HEIGHT * .5f,
+                           THEME_MAP_RADIUS_Z * sinf(angle));
+        Mat4 local = mat4_mul(
+            mat4_translate(center),
+            mat4_mul(mat4_rotate_y(yaw),
+                     mat4_scale(vec3(v3_length(v3_sub(end, start)), THEME_BACK_WALL_HEIGHT,
+                                     THEME_BACK_WALL_THICKNESS))));
+        if (!solid_child(m, m->back_wall_collision, "segmento da parede traseira", local))
+            return false;
+    }
+
+    if (!solid(m, "coluna esquerda", vec3(-1.9f, 2.3f, 0), vec3(.16f, 4.6f, .16f), RED) ||
         !solid(m, "coluna direita", vec3(3.9f, 2.3f, 0), vec3(.16f, 4.6f, .16f), RED) ||
         !solid(m, "letreiro", vec3(1, 4.55f, -3.45f), vec3(2, .14f, .15f), RED) ||
         !solid(m, "batente", vec3(3.8f, .45f, 0), vec3(.18f, .90f, 2.4f), RED) ||
@@ -125,9 +168,6 @@ static bool build_cabinet(PrizeMachine *m) {
     if (!themed_solid(m, "cupula", THEME_ROOF) || !themed_solid(m, "fuselagem", THEME_BASE) ||
         !themed_solid(m, "aleta esquerda", THEME_FIN_LEFT) ||
         !themed_solid(m, "aleta direita", THEME_FIN_RIGHT))
-        return false;
-    Geometry *details = theme_cabinet_create(THEME_DETAILS);
-    if (!details || !add_node(m->root, "estrelas e planetas", details))
         return false;
     return true;
 }
@@ -768,7 +808,8 @@ static bool unobstructed(const PrizeMachine *m, Vec3 a, Vec3 b) {
     Ray ray = {a, v3_scale(delta, 1 / length)};
     for (int i = 0; i < m->solid_count; ++i) {
         float t;
-        if (ray_aabb(ray, scene_bounds(m->solids[i].node), &t) && t < length - .002f)
+        AABB bounds = scene_bounds(m->solids[i].node);
+        if (bounds.intersects_ray(&bounds, ray, &t) && t < length - .002f)
             return false;
     }
     return true;
@@ -784,7 +825,8 @@ int machine_capture_candidate(const PrizeMachine *m, float *required_gap) {
     for (int i = 0; i < PRIZE_COUNT; ++i)
         if (m->prizes[i].state == PRIZE_AVAILABLE) {
             const SceneNode *node = m->prizes[i].node;
-            AABB local = aabb_transform(node->geometry->bounds, mat4_mul(inverse, node->world));
+            AABB local = node->geometry->bounds;
+            local.transform(&local, mat4_mul(inverse, node->world));
             Vec3 center = v3_scale(v3_add(local.min, local.max), .5f);
             float width = local.max.x - local.min.x + 2 * fabsf(center.x);
             if (fabsf(center.x) > MACHINE_CONFIG.capture_x ||
@@ -939,9 +981,11 @@ bool machine_pose_valid(const PrizeMachine *m) {
         AABB bounds = scene_bounds(m->arm.parts[part]);
         if (!inside_workspace(bounds))
             return false;
-        for (int s = 0; s < m->solid_count; ++s)
-            if (aabb_overlap(bounds, scene_bounds(m->solids[s].node), tolerance))
+        for (int s = 0; s < m->solid_count; ++s) {
+            AABB obstacle = scene_bounds(m->solids[s].node);
+            if (bounds.overlaps(&bounds, &obstacle, tolerance))
                 return false;
+        }
         for (int p = 0; p < PRIZE_COUNT; ++p) {
             if (m->prizes[p].state == PRIZE_HELD)
                 continue;
@@ -956,13 +1000,16 @@ bool machine_pose_valid(const PrizeMachine *m) {
                     continue;
                 Mat4 inverse;
                 if (mat4_inverse(m->arm.parts[part]->world, &inverse)) {
-                    AABB local = aabb_transform(m->prizes[p].node->geometry->bounds,
-                                                mat4_mul(inverse, m->prizes[p].node->world));
-                    if (!aabb_overlap(local, m->arm.parts[part]->geometry->bounds, tolerance))
+                    AABB local = m->prizes[p].node->geometry->bounds;
+                    local.transform(&local,
+                                    mat4_mul(inverse, m->prizes[p].node->world));
+                    AABB part_local = m->arm.parts[part]->geometry->bounds;
+                    if (!local.overlaps(&local, &part_local, tolerance))
                         continue;
                 }
             }
-            if (aabb_overlap(bounds, scene_bounds(m->prizes[p].node), tolerance))
+            AABB prize_bounds = scene_bounds(m->prizes[p].node);
+            if (bounds.overlaps(&bounds, &prize_bounds, tolerance))
                 return false;
         }
     }
@@ -970,13 +1017,17 @@ bool machine_pose_valid(const PrizeMachine *m) {
         AABB bounds = scene_bounds(m->prizes[m->held].node);
         if (!inside_workspace(bounds))
             return false;
-        for (int s = 0; s < m->solid_count; ++s)
-            if (aabb_overlap(bounds, scene_bounds(m->solids[s].node), tolerance))
+        for (int s = 0; s < m->solid_count; ++s) {
+            AABB obstacle = scene_bounds(m->solids[s].node);
+            if (bounds.overlaps(&bounds, &obstacle, tolerance))
                 return false;
+        }
         for (int p = 0; p < PRIZE_COUNT; ++p)
-            if (p != m->held)
-                if (aabb_overlap(bounds, scene_bounds(m->prizes[p].node), tolerance))
+            if (p != m->held) {
+                AABB prize_bounds = scene_bounds(m->prizes[p].node);
+                if (bounds.overlaps(&bounds, &prize_bounds, tolerance))
                     return false;
+            }
     }
     return true;
 }
@@ -1194,12 +1245,16 @@ static bool spawn_sites_valid(const PrizeMachine *m) {
             if (x * x + z * z > .98f)
                 return false;
         }
-        for (int s = 0; s < m->solid_count; ++s)
-            if (aabb_overlap(box, scene_bounds(m->solids[s].node), 0))
+        for (int s = 0; s < m->solid_count; ++s) {
+            AABB obstacle = scene_bounds(m->solids[s].node);
+            if (box.overlaps(&box, &obstacle, 0))
                 return false;
-        for (int other = 0; other < p; ++other)
-            if (aabb_overlap(box, scene_bounds(m->prizes[other].node), -.12f))
+        }
+        for (int other = 0; other < p; ++other) {
+            AABB other_box = scene_bounds(m->prizes[other].node);
+            if (box.overlaps(&box, &other_box, -.12f))
                 return false;
+        }
     }
     return machine_pose_valid(m);
 }
@@ -1328,8 +1383,9 @@ void machine_update(PrizeMachine *m, float dt) {
         }
         if (m->release_contact >= 0) {
             AABB p = scene_bounds(m->prizes[m->release_contact].node);
-            if (!aabb_overlap(p, scene_bounds(m->arm.parts[3]), 0) &&
-                !aabb_overlap(p, scene_bounds(m->arm.parts[4]), 0))
+            AABB left_finger = scene_bounds(m->arm.parts[3]);
+            AABB right_finger = scene_bounds(m->arm.parts[4]);
+            if (!p.overlaps(&p, &left_finger, 0) && !p.overlaps(&p, &right_finger, 0))
                 m->release_contact = -1;
         }
         if (timed)
@@ -1358,25 +1414,29 @@ int machine_pick(PrizeMachine *m, Ray ray) {
     int selected = -1;
     for (int s = 0; s < m->solid_count; ++s) {
         float distance;
-        if (ray_aabb(ray, scene_bounds(m->solids[s].node), &distance))
+        AABB bounds = scene_bounds(m->solids[s].node);
+        if (bounds.intersects_ray(&bounds, ray, &distance))
             closest = fminf(closest, distance);
     }
     for (int p = 0; p < ARM_PART_COUNT; ++p) {
         float distance;
-        if (ray_aabb(ray, scene_bounds(m->arm.parts[p]), &distance))
+        AABB bounds = scene_bounds(m->arm.parts[p]);
+        if (bounds.intersects_ray(&bounds, ray, &distance))
             closest = fminf(closest, distance);
     }
     /* Held/delivered prizes occlude too, although they are not selectable. */
     for (int p = 0; p < PRIZE_COUNT; ++p)
         if (m->prizes[p].state != PRIZE_AVAILABLE) {
             float distance;
-            if (ray_aabb(ray, scene_bounds(m->prizes[p].node), &distance))
+            AABB bounds = scene_bounds(m->prizes[p].node);
+            if (bounds.intersects_ray(&bounds, ray, &distance))
                 closest = fminf(closest, distance);
         }
     for (int p = 0; p < PRIZE_COUNT; ++p)
         if (m->prizes[p].state == PRIZE_AVAILABLE) {
             float distance;
-            if (ray_aabb(ray, scene_bounds(m->prizes[p].node), &distance) && distance < closest) {
+            AABB bounds = scene_bounds(m->prizes[p].node);
+            if (bounds.intersects_ray(&bounds, ray, &distance) && distance < closest) {
                 selected = p;
                 closest = distance;
             }

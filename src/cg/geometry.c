@@ -23,11 +23,12 @@ static void mesh_destroy(Geometry *self) {
 }
 static void mesh_draw(Geometry *self) {
     const Mesh *mesh = (const Mesh *)self;
+    float alpha = cg_clamp(self->opacity, 0, 1);
     glBegin(GL_TRIANGLES);
     for (size_t i = 0; i < mesh->vertex_count; ++i) {
         const MeshVertex *v = &mesh->vertices[i];
-        glColor3f(v->color.r * self->color.r, v->color.g * self->color.g,
-                  v->color.b * self->color.b);
+        glColor4f(v->color.r * self->color.r, v->color.g * self->color.g,
+                  v->color.b * self->color.b, alpha);
         glNormal3f(v->normal.x, v->normal.y, v->normal.z);
         glVertex3f(v->position.x, v->position.y, v->position.z);
     }
@@ -43,7 +44,7 @@ static void box_draw(Geometry *self) {
         {{-.5f, -.5f, .5f}, {-.5f, -.5f, -.5f}, {.5f, -.5f, -.5f}, {.5f, -.5f, .5f}},
         {{-.5f, -.5f, .5f}, {.5f, -.5f, .5f}, {.5f, .5f, .5f}, {-.5f, .5f, .5f}},
         {{.5f, -.5f, -.5f}, {-.5f, -.5f, -.5f}, {-.5f, .5f, -.5f}, {.5f, .5f, -.5f}}};
-    glColor3f(self->color.r, self->color.g, self->color.b);
+    glColor4f(self->color.r, self->color.g, self->color.b, cg_clamp(self->opacity, 0, 1));
     glBegin(GL_QUADS);
     for (int face = 0; face < 6; ++face) {
         glNormal3fv(normals[face]);
@@ -54,7 +55,7 @@ static void box_draw(Geometry *self) {
 }
 static void cylinder_draw(Geometry *self) {
     Cylinder *cylinder = (Cylinder *)self;
-    glColor3f(self->color.r, self->color.g, self->color.b);
+    glColor4f(self->color.r, self->color.g, self->color.b, cg_clamp(self->opacity, 0, 1));
     glBegin(GL_QUAD_STRIP);
     for (unsigned i = 0; i <= cylinder->segments; ++i) {
         float a = cg_radians(360.0f * (float)i / (float)cylinder->segments), x = cosf(a),
@@ -77,7 +78,13 @@ static void cylinder_draw(Geometry *self) {
 }
 static Geometry base(Color color, const char *name, void (*draw)(Geometry *),
                      void (*destroy)(Geometry *)) {
-    return (Geometry){color, {{-.5f, -.5f, -.5f}, {.5f, .5f, .5f}}, name, draw, set_color, destroy};
+    return (Geometry){.color = color,
+                      .opacity = 1,
+                      .bounds = AABB_INIT(-.5f, -.5f, -.5f, .5f, .5f, .5f),
+                      .name = name,
+                      .draw = draw,
+                      .set_color = set_color,
+                      .destroy = destroy};
 }
 static Box *box_create(Color color) {
     Box *box = malloc(sizeof(*box));
@@ -98,7 +105,7 @@ static Cylinder *cylinder_create(Color color, unsigned segments) {
 static Mesh *mesh_create(const MeshVertex *vertices, size_t count) {
     if (!vertices || count < 3 || count % 3 || count > SIZE_MAX / sizeof(*vertices))
         return NULL;
-    AABB bounds = {vertices[0].position, vertices[0].position};
+    AABB bounds = aabb_make(vertices[0].position, vertices[0].position);
     for (size_t i = 0; i < count; ++i) {
         const MeshVertex *v = &vertices[i];
         if (!isfinite(v->position.x) || !isfinite(v->position.y) || !isfinite(v->position.z) ||

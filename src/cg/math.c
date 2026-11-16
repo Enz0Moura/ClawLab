@@ -150,28 +150,43 @@ bool mat4_inverse(Mat4 m, Mat4 *out) {
             out->m[c * 4 + r] = a[r][c + 4];
     return true;
 }
-AABB aabb_transform(AABB b, Mat4 m) {
-    AABB r = {vec3(FLT_MAX, FLT_MAX, FLT_MAX), vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX)};
+AABB aabb_make(Vec3 min, Vec3 max) {
+    return (AABB){.min = min,
+                  .max = max,
+                  .transform = aabb_transform_method,
+                  .overlaps = aabb_overlap_method,
+                  .intersects_ray = ray_aabb_method};
+}
+void aabb_transform_method(AABB *self, Mat4 m) {
+    if (!self)
+        return;
+    Vec3 min = vec3(FLT_MAX, FLT_MAX, FLT_MAX), max = vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
     for (int i = 0; i < 8; ++i) {
-        Vec3 p = mat4_point(m, vec3(i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y,
-                                    i & 4 ? b.max.z : b.min.z));
-        r.min.x = fminf(r.min.x, p.x);
-        r.min.y = fminf(r.min.y, p.y);
-        r.min.z = fminf(r.min.z, p.z);
-        r.max.x = fmaxf(r.max.x, p.x);
-        r.max.y = fmaxf(r.max.y, p.y);
-        r.max.z = fmaxf(r.max.z, p.z);
+        Vec3 p = mat4_point(m, vec3(i & 1 ? self->max.x : self->min.x,
+                                    i & 2 ? self->max.y : self->min.y,
+                                    i & 4 ? self->max.z : self->min.z));
+        min.x = fminf(min.x, p.x);
+        min.y = fminf(min.y, p.y);
+        min.z = fminf(min.z, p.z);
+        max.x = fmaxf(max.x, p.x);
+        max.y = fmaxf(max.y, p.y);
+        max.z = fmaxf(max.z, p.z);
     }
-    return r;
+    self->min = min;
+    self->max = max;
 }
-bool aabb_overlap(AABB a, AABB b, float t) {
-    return a.max.x > b.min.x + t && a.min.x < b.max.x - t && a.max.y > b.min.y + t &&
-           a.min.y < b.max.y - t && a.max.z > b.min.z + t && a.min.z < b.max.z - t;
+bool aabb_overlap_method(const AABB *a, const AABB *b, float t) {
+    return a && b && a->max.x > b->min.x + t && a->min.x < b->max.x - t &&
+           a->max.y > b->min.y + t && a->min.y < b->max.y - t &&
+           a->max.z > b->min.z + t && a->min.z < b->max.z - t;
 }
-bool ray_aabb(Ray ray, AABB box, float *distance) {
+bool ray_aabb_method(const AABB *box, Ray ray, float *distance) {
+    if (!box)
+        return false;
     float origin[3] = {ray.origin.x, ray.origin.y, ray.origin.z};
     float dir[3] = {ray.direction.x, ray.direction.y, ray.direction.z};
-    float lo[3] = {box.min.x, box.min.y, box.min.z}, hi[3] = {box.max.x, box.max.y, box.max.z};
+    float lo[3] = {box->min.x, box->min.y, box->min.z};
+    float hi[3] = {box->max.x, box->max.y, box->max.z};
     float near_t = 0, far_t = FLT_MAX;
     if (v3_length(ray.direction) < 1e-8f)
         return false;
@@ -195,4 +210,20 @@ bool ray_aabb(Ray ray, AABB box, float *distance) {
     if (distance)
         *distance = near_t;
     return true;
+}
+AABB aabb_transform(AABB box, Mat4 world) {
+    if (!box.transform)
+        box = aabb_make(box.min, box.max);
+    box.transform(&box, world);
+    return box;
+}
+bool aabb_overlap(AABB a, AABB b, float tolerance) {
+    if (a.overlaps)
+        return a.overlaps(&a, &b, tolerance);
+    return aabb_overlap_method(&a, &b, tolerance);
+}
+bool ray_aabb(Ray ray, AABB box, float *distance) {
+    if (box.intersects_ray)
+        return box.intersects_ray(&box, ray, distance);
+    return ray_aabb_method(&box, ray, distance);
 }
